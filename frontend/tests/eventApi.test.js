@@ -8,7 +8,62 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, eventApi } from '../src/services/eventApi'
+import { ApiError, eventApi, normalizeBaseUrl } from '../src/services/eventApi'
+
+describe('normalizeBaseUrl', () => {
+  it('defaults to the dev proxy path when unset', () => {
+    for (const empty of [undefined, null, '', '   ']) {
+      expect(normalizeBaseUrl(empty)).toBe('/api')
+    }
+  })
+
+  it('keeps a correctly formed URL as-is', () => {
+    expect(normalizeBaseUrl('https://api.example.com/api')).toBe(
+      'https://api.example.com/api',
+    )
+  })
+
+  it('strips a trailing slash that would produce a double slash', () => {
+    // ".../api/" + "/events/..." => ".../api//events/..." => 404
+    expect(normalizeBaseUrl('https://api.example.com/api/')).toBe(
+      'https://api.example.com/api',
+    )
+    expect(normalizeBaseUrl('https://api.example.com/api///')).toBe(
+      'https://api.example.com/api',
+    )
+  })
+
+  it('appends the /api prefix when it was omitted', () => {
+    // The single most common deployment slip; the backend mounts every router
+    // under /api, so without it every request 404s.
+    expect(normalizeBaseUrl('https://api.example.com')).toBe(
+      'https://api.example.com/api',
+    )
+    expect(normalizeBaseUrl('https://api.example.com/')).toBe(
+      'https://api.example.com/api',
+    )
+  })
+
+  it('trims surrounding whitespace from a pasted value', () => {
+    expect(normalizeBaseUrl('  https://api.example.com/api  ')).toBe(
+      'https://api.example.com/api',
+    )
+  })
+
+  it('does not double up an existing suffix', () => {
+    const once = normalizeBaseUrl('https://api.example.com')
+    expect(once).toBe('https://api.example.com/api')
+    // Idempotent: re-normalising must not yield .../api/api
+    expect(normalizeBaseUrl(once)).toBe(once)
+    expect(once.endsWith('/api/api')).toBe(false)
+  })
+
+  it('preserves a sub-path deployment', () => {
+    expect(normalizeBaseUrl('https://example.com/festivo')).toBe(
+      'https://example.com/festivo/api',
+    )
+  })
+})
 
 const jsonResponse = (body, status = 200) => ({
   ok: status >= 200 && status < 300,

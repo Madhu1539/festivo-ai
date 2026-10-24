@@ -3,7 +3,28 @@
  * UI can always show a friendly message plus a retry action (§18.4).
  */
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
+/**
+ * Normalise the configured API base URL.
+ *
+ * `VITE_API_BASE_URL` is inlined at build time and set by hand in a hosting
+ * dashboard, which makes two slips very easy — and both fail opaquely, because
+ * the request reaches a real server that simply has no such route and answers
+ * 404 "The requested item could not be found":
+ *
+ *   - a trailing slash, producing `/api//events/...`
+ *   - omitting `/api` entirely, producing `/events/...`
+ *
+ * The backend always mounts its routers under `/api` (see `main.py`), so there
+ * is exactly one correct suffix and appending it when absent is deterministic
+ * rather than a guess.
+ */
+export function normalizeBaseUrl(raw) {
+  const value = (raw ?? '').trim().replace(/\/+$/, '')
+  if (!value) return '/api'
+  return value.endsWith('/api') ? value : `${value}/api`
+}
+
+const BASE = normalizeBaseUrl(import.meta.env?.VITE_API_BASE_URL)
 
 export class ApiError extends Error {
   constructor({ code, message, details = [], status }) {
