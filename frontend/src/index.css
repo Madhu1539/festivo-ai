@@ -1,0 +1,265 @@
+@import 'tailwindcss';
+
+/* Design system (§7.2), extended with a light pastel tint palette so cards and
+   sections read as distinct, colourful surfaces rather than flat white. */
+@theme {
+  /* Extra-small breakpoint for narrow phones (<384px). */
+  --breakpoint-xs: 24rem;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+
+  --color-canvas: #faf8f5;
+  --color-ink: #25213a;
+  --color-muted: #6b6880;
+  --color-hairline: #e8e1f2;
+
+  /* Border colour for interactive controls. The pastel *-200 tokens are
+     decorative only: they sit at ~1.6:1 on white and would fail WCAG 1.4.11,
+     which requires 3:1 for the boundary of a control or a state indicator. */
+  --color-control: #8a82a6;
+
+  --color-brand: #6d4aff;
+  --color-brand-soft: #f1ecff;
+  --color-brand-mid: #d9cdff;
+  --color-brand-deep: #4c2fd1;
+
+  --color-success: #0f7050;
+  --color-success-soft: #e4f7ee;
+  --color-warning: #8a5b05;
+  --color-warning-soft: #fdf2e0;
+  --color-danger: #b32d21;
+  --color-danger-soft: #fdeae8;
+
+  /* --- Pastel tints -------------------------------------------------------
+     Each family is: 50 = card wash, 100 = chip fill, 200 = decorative border,
+     600 = icon and label text.
+
+     The 600 steps are tuned so each clears WCAG AA (4.5:1) as normal-size text
+     on its own 50 wash, not merely on white. `tests/contrast.test.js` computes
+     every pair and fails the build if one regresses, so do not lighten these
+     without running it. */
+  --color-lav-50: #f5f1ff;
+  --color-lav-100: #ebe3ff;
+  --color-lav-200: #d4c6fb;
+  --color-lav-600: #5b37e0;
+
+  --color-mint-50: #edfbf4;
+  --color-mint-100: #d8f5e7;
+  --color-mint-200: #a9e5c9;
+  --color-mint-600: #0f7050;
+
+  --color-peach-50: #fff3ed;
+  --color-peach-100: #ffe5d8;
+  --color-peach-200: #fdc7ac;
+  --color-peach-600: #a84420;
+
+  --color-sky-50: #eef5ff;
+  --color-sky-100: #ddeaff;
+  --color-sky-200: #b4d0fa;
+  --color-sky-600: #2b5fc9;
+
+  --color-butter-50: #fff8e8;
+  --color-butter-100: #ffeec7;
+  --color-butter-200: #f7d894;
+  --color-butter-600: #8a5b05;
+
+  --color-rose-50: #fff0f5;
+  --color-rose-100: #ffdeea;
+  --color-rose-200: #f9bed2;
+  --color-rose-600: #b93a66;
+
+  --color-teal-50: #ecfafa;
+  --color-teal-100: #d4f3f3;
+  --color-teal-200: #a0e2e2;
+  --color-teal-600: #0e6f73;
+
+  /* Chart palette for the budget distribution (§7.5 B) */
+  --color-chart-1: #7c5cff;
+  --color-chart-2: #ff8a63;
+  --color-chart-3: #2bb3b6;
+  --color-chart-4: #f6b64a;
+  --color-chart-5: #c96ae0;
+  --color-chart-6: #5a8cf7;
+  --color-chart-7: #3cc078;
+  --color-chart-8: #ef7093;
+  --color-chart-9: #9b8ce6;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply text-ink font-sans antialiased;
+    margin: 0;
+    /* Soft multi-hue wash behind everything, fixed so it does not tile. */
+    background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(
+        42rem 32rem at 12% -4%,
+        rgba(109, 74, 255, 0.11),
+        transparent 62%
+      ),
+      radial-gradient(
+        38rem 30rem at 94% 2%,
+        rgba(255, 138, 99, 0.1),
+        transparent 60%
+      ),
+      radial-gradient(
+        44rem 34rem at 50% 104%,
+        rgba(43, 179, 182, 0.09),
+        transparent 62%
+      );
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    min-height: 100vh;
+  }
+
+  /* Visible focus indicators everywhere (§18.6) */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+
+  /* Elements focused programmatically for screen readers are not interactive,
+     so they should not display an input-style focus ring. */
+  :where(h1, h2, div, main)[tabindex='-1']:focus,
+  :where(h1, h2, div, main)[tabindex='-1']:focus-visible {
+    outline: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* --- Buttons -------------------------------------------------------------
+   Declared as utilities so they can compose with @apply (Tailwind v4). */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold
+    transition-all disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+@utility btn-primary {
+  @apply btn border border-brand-deep/25 bg-linear-to-br from-brand to-brand-deep text-white
+    shadow-[0_2px_8px_rgba(109,74,255,0.3)] hover:shadow-[0_4px_14px_rgba(109,74,255,0.42)];
+}
+
+@utility btn-secondary {
+  @apply btn border border-lav-200 bg-white/85 text-ink shadow-[0_1px_2px_rgba(37,33,58,0.05)]
+    hover:border-brand-mid hover:bg-lav-50;
+}
+
+@utility btn-ghost {
+  @apply btn text-muted hover:bg-lav-50 hover:text-brand;
+}
+
+/* --- Cards ---------------------------------------------------------------
+   A base card plus tinted variants. Each variant is a light vertical wash with
+   a matching, clearly visible border. */
+@utility card {
+  @apply rounded-2xl border border-hairline bg-white/85 shadow-[0_1px_3px_rgba(37,33,58,0.05)]
+    backdrop-blur-[2px];
+}
+
+@utility card-lav {
+  @apply rounded-2xl border border-lav-200 bg-linear-to-b from-lav-50 to-white
+    shadow-[0_2px_10px_rgba(109,74,255,0.08)];
+}
+
+@utility card-mint {
+  @apply rounded-2xl border border-mint-200 bg-linear-to-b from-mint-50 to-white
+    shadow-[0_2px_10px_rgba(21,131,90,0.08)];
+}
+
+@utility card-peach {
+  @apply rounded-2xl border border-peach-200 bg-linear-to-b from-peach-50 to-white
+    shadow-[0_2px_10px_rgba(194,82,42,0.08)];
+}
+
+@utility card-sky {
+  @apply rounded-2xl border border-sky-200 bg-linear-to-b from-sky-50 to-white
+    shadow-[0_2px_10px_rgba(43,95,201,0.08)];
+}
+
+@utility card-butter {
+  @apply rounded-2xl border border-butter-200 bg-linear-to-b from-butter-50 to-white
+    shadow-[0_2px_10px_rgba(160,106,6,0.08)];
+}
+
+@utility card-rose {
+  @apply rounded-2xl border border-rose-200 bg-linear-to-b from-rose-50 to-white
+    shadow-[0_2px_10px_rgba(194,63,108,0.08)];
+}
+
+@utility card-teal {
+  @apply rounded-2xl border border-teal-200 bg-linear-to-b from-teal-50 to-white
+    shadow-[0_2px_10px_rgba(16,123,127,0.08)];
+}
+
+/* Inner surface that still reads as a panel on a tinted card. */
+@utility panel {
+  @apply rounded-xl border border-white/70 bg-white/75 backdrop-blur-[1px];
+}
+
+@utility chip {
+  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold;
+}
+
+/* Bordered chip for tinted surfaces, so it stays legible on a wash. */
+@utility chip-outline {
+  @apply chip border border-lav-200 bg-white/80 text-muted;
+}
+
+@layer components {
+  .field-label {
+    @apply mb-1.5 block text-sm font-semibold text-ink;
+  }
+
+  .field-input {
+    /* border-control, not border-lav-200: this boundary is the only thing
+       identifying the field, so it must clear 3:1 (WCAG 1.4.11). */
+    @apply w-full rounded-xl border border-control bg-white px-3.5 py-2.5 text-sm text-ink
+      transition-colors placeholder:text-muted hover:border-brand
+      focus:border-brand focus:bg-white focus:outline-none;
+  }
+
+  .field-input-error {
+    @apply border-danger bg-danger-soft/40 focus:border-danger;
+  }
+
+  .field-hint {
+    @apply mt-1.5 text-xs text-muted;
+  }
+
+  .field-error {
+    @apply mt-1.5 flex items-start gap-1.5 text-xs font-medium text-danger;
+  }
+
+  .section-anchor {
+    scroll-margin-top: 5.5rem;
+  }
+
+  /* Gradient text. The pink end of this ramp sits at ~3.2:1 on white, which
+     only clears WCAG AA for large text, so this is restricted to headings at
+     24px+. Small wordmarks use solid text-brand instead. */
+  .text-gradient {
+    @apply bg-linear-to-br from-brand-deep via-brand to-chart-5 bg-clip-text text-transparent;
+  }
+}
+
+/* Skip link (§18.6) */
+.skip-link {
+  @apply absolute left-4 z-50 -translate-y-20 rounded-lg bg-brand px-4 py-2 text-sm
+    font-semibold text-white transition-transform focus:translate-y-4;
+}

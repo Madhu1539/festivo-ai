@@ -1,0 +1,38 @@
+# Secrets — never commit (§19.1)
+.env
+.env.*
+!.env.example
+
+# Internal spec — kept local, not published
+spec.md
+
+# Python
+backend/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local database
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+npm-debug.log*
+# Stray lockfile from running npm at the repo root; there is no root package.
+/package-lock.json
+
+# Logs — may contain request details
+*.log
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+spec.md 

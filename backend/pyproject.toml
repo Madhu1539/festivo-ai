@@ -1,0 +1,40 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = [
+    "F",     # pyflakes: real errors — unused names, undefined names
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "I",     # import sorting
+    "UP",    # pyupgrade
+    "B",     # bugbear: likely bugs
+    "C4",    # comprehension misuse
+    "SIM",   # simplifiable code
+    "RUF",   # ruff's own checks
+    "ISC",   # implicit string concatenation (catches missing commas in lists)
+]
+
+ignore = [
+    # `Depends(...)` in a parameter default is the FastAPI dependency-injection
+    # idiom, not a mutable-default bug. Rewriting it the way this rule wants
+    # would break the framework's signature introspection.
+    "B008",
+    # Implicit concatenation across lines is how long user-facing messages are
+    # written here. ISC003 would have us add explicit `+`, which is noisier.
+    "ISC001",
+    # Deliberate: the database and provider layers must degrade rather than
+    # propagate an arbitrary driver exception to the user. Each site logs and
+    # converts to a typed AppError.
+    "BLE001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on private helpers on purpose, and long literal payloads are
+# clearer unwrapped.
+"tests/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
