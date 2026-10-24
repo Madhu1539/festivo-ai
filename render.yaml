@@ -1,0 +1,40 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# This repo is a monorepo, so `rootDir` points Render at the backend. The
+# frontend is deployed separately on Vercel.
+#
+# Secrets are deliberately `sync: false`: they are set in the Render dashboard,
+# never committed here (§19.1).
+services:
+  - type: web
+    name: festivo-ai-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Tables are created on startup, so a healthy response also means the
+    # database connection worked.
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+
+      - key: ENVIRONMENT
+        value: production
+
+      # Render terminates TLS at its load balancer, so request.client.host is
+      # the proxy. Without this the rate limiter would put every visitor in a
+      # single shared bucket.
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+
+      # Set these in the dashboard: Environment -> Add Environment Variable.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      # Comma-separated. Must include the exact Vercel origin, scheme included
+      # and no trailing slash, e.g. https://festivo-ai.vercel.app
+      - key: CORS_ORIGINS
+        sync: false

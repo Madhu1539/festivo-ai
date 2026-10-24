@@ -51,6 +51,29 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def client_key(request: Request, *, trust_proxy: bool) -> str:
+    """Identify the caller for rate-limiting purposes.
+
+    Behind a reverse proxy, `request.client.host` is the *proxy's* address, so
+    every user would share a single bucket and the limit would throttle the
+    whole service at once. The real address has to come from
+    `X-Forwarded-For`.
+
+    The **rightmost** entry is used, not the leftmost. The header is a
+    caller-supplied list that each hop appends to, so a client can send a
+    header full of invented addresses; the trusted proxy appends the address
+    it actually saw to the end. Taking the leftmost value would let anyone
+    rotate a fake IP per request and bypass the limit completely.
+    """
+    if trust_proxy:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
+
+    return request.client.host if request.client else "unknown"
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Sliding-window limit on the endpoints that cost money to serve.
 
@@ -66,11 +89,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         paths: Iterable[str],
         max_requests: int,
         window_seconds: float,
+        trust_proxy: bool = False,
     ) -> None:
         super().__init__(app)
         self._paths = tuple(paths)
         self._max_requests = max_requests
         self._window = window_seconds
+        self._trust_proxy = trust_proxy
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     def _is_limited(self, path: str) -> bool:
@@ -80,7 +105,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method != "POST" or not self._is_limited(request.url.path):
             return await call_next(request)
 
-        client = request.client.host if request.client else "unknown"
+        client = client_key(request, trust_proxy=self._trust_proxy)
         now = time.monotonic()
         hits = self._hits[client]
 

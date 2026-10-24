@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: float = 60.0
     rate_limit_enabled: bool = True
 
+    # Set to true when the app runs behind a reverse proxy that appends the
+    # real client IP to X-Forwarded-For (Render, Fly, Heroku, nginx, ...).
+    #
+    # This must stay false when the app is reachable directly, because the
+    # header is caller-supplied: trusting it without a proxy in front lets
+    # anyone rotate the value and bypass the rate limit entirely.
+    trust_proxy_headers: bool = False
+
     # --- Database (Supabase Postgres via the connection pooler) -----------
     # Example (transaction pooler, port 6543):
     #   postgresql+psycopg://postgres.<ref>:<pw>@aws-1-<region>.pooler.supabase.com:6543/postgres

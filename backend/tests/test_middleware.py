@@ -11,12 +11,14 @@ from datetime import date, timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app.errors import register_error_handlers
 from app.middleware import (
     MAX_BODY_BYTES,
     BodySizeLimitMiddleware,
     RateLimitMiddleware,
+    client_key,
 )
 
 
@@ -109,6 +111,83 @@ def test_rate_limit_window_expires():
 
     time.sleep(0.01)
     assert client.post("/api/events/generate-plan", json=_payload()).status_code == 200
+
+
+# --- Client identification behind a proxy --------------------------------
+#
+# Deployed on Render/Fly/Heroku, `request.client.host` is the load balancer,
+# so without X-Forwarded-For handling every user shares one bucket and the
+# limit throttles the whole service at once.
+
+
+def _request(headers: dict[str, str] | None = None, host: str = "10.0.0.1"):
+    """A minimal Request with a client address and optional headers."""
+    raw = [
+        (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
+    ]
+    return Request({"type": "http", "headers": raw, "client": (host, 1234)})
+
+
+def test_direct_connections_use_the_socket_address():
+    assert client_key(_request(host="203.0.113.7"), trust_proxy=False) == "203.0.113.7"
+
+
+def test_forwarded_header_is_ignored_when_not_behind_a_proxy():
+    """Otherwise anyone could rotate the header and bypass the limit."""
+    request = _request({"X-Forwarded-For": "1.2.3.4"}, host="203.0.113.7")
+    assert client_key(request, trust_proxy=False) == "203.0.113.7"
+
+
+def test_behind_a_proxy_the_real_client_is_used():
+    request = _request({"X-Forwarded-For": "203.0.113.7"}, host="10.0.0.1")
+    assert client_key(request, trust_proxy=True) == "203.0.113.7"
+
+
+def test_a_spoofed_forwarded_chain_cannot_bypass_the_limit():
+    """The rightmost entry is the one the trusted proxy appended.
+
+    A client can pre-populate the header with anything, so taking the
+    leftmost value would let it present a fresh fake IP on every request.
+    """
+    request = _request(
+        {"X-Forwarded-For": "9.9.9.9, 8.8.8.8, 203.0.113.7"}, host="10.0.0.1"
+    )
+    assert client_key(request, trust_proxy=True) == "203.0.113.7"
+
+
+def test_falls_back_when_the_proxy_sends_no_header():
+    request = _request({}, host="10.0.0.1")
+    assert client_key(request, trust_proxy=True) == "10.0.0.1"
+
+
+def test_an_empty_forwarded_header_falls_back():
+    request = _request({"X-Forwarded-For": "  ,  "}, host="10.0.0.1")
+    assert client_key(request, trust_proxy=True) == "10.0.0.1"
+
+
+def test_two_users_behind_one_proxy_get_separate_budgets():
+    """The regression this guards: one shared bucket for every visitor."""
+    client = TestClient(
+        _app(
+            paths=("/events/generate-plan",),
+            max_requests=1,
+            window_seconds=60.0,
+            trust_proxy=True,
+        )
+    )
+
+    def post(ip: str):
+        return client.post(
+            "/api/events/generate-plan",
+            json=_payload(),
+            headers={"X-Forwarded-For": ip},
+        )
+
+    assert post("203.0.113.1").status_code == 200
+    assert post("203.0.113.1").status_code == 429  # same user, over budget
+
+    # A different visitor must not be punished for the first one's usage.
+    assert post("203.0.113.2").status_code == 200
 
 
 # --- Body size ------------------------------------------------------------

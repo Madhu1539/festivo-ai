@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
             paths=("/events/generate-plan", "/events/regenerate-plan"),
             max_requests=settings.rate_limit_requests,
             window_seconds=settings.rate_limit_window_seconds,
+            trust_proxy=settings.trust_proxy_headers,
         )
 
     app.add_middleware(BodySizeLimitMiddleware)
