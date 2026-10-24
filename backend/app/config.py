@@ -59,7 +59,24 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        """The CORS allowlist, normalised to what a browser actually sends.
+
+        An `Origin` header is only ever scheme + host + optional port: never a
+        trailing slash and never a path. People naturally paste a URL copied
+        from the address bar ("https://example.vercel.app/"), which then
+        matches nothing, and the browser reports the rejected preflight as a
+        generic network failure — so the cause is invisible from the frontend.
+
+        Trailing slashes are therefore stripped rather than treated as a
+        configuration error. This only ever widens the match to the origin the
+        operator plainly meant; it cannot admit an origin they did not list.
+        """
+        origins: list[str] = []
+        for raw in self.cors_origins.split(","):
+            origin = raw.strip().rstrip("/")
+            if origin and origin not in origins:
+                origins.append(origin)
+        return origins
 
     @property
     def ai_configured(self) -> bool:

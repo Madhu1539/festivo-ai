@@ -32,9 +32,15 @@ services:
       # Set these in the dashboard: Environment -> Add Environment Variable.
       - key: GEMINI_API_KEY
         sync: false
+      # Required for saved plans to survive a restart. Render's filesystem is
+      # ephemeral, so without this the app falls back to SQLite and every
+      # saved plan is lost on the next deploy.
       - key: DATABASE_URL
         sync: false
-      # Comma-separated. Must include the exact Vercel origin, scheme included
-      # and no trailing slash, e.g. https://festivo-ai.vercel.app
+      # Comma-separated browser origins. Use your own Vercel host, which may
+      # carry a suffix Vercel added (e.g. my-app-five.vercel.app).
+      #
+      # A trailing slash is tolerated but pointless: a browser's Origin header
+      # is only ever scheme://host[:port].
       - key: CORS_ORIGINS
         sync: false
