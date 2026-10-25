@@ -28,8 +28,18 @@ _DATE_FORMATS = (
 )
 
 
+def is_accelerated_in(days_until_event: int) -> bool:
+    """Whether an event is too close for a normal planning schedule.
+
+    The single definition of the rule, so the generate path and the
+    read-from-storage path cannot disagree. The lower bound matters: an event
+    already in the past is not "accelerated", it is over.
+    """
+    return 0 <= days_until_event <= ACCELERATED_THRESHOLD_DAYS
+
+
 def is_accelerated(event: EventInput) -> bool:
-    return event.days_until_event <= ACCELERATED_THRESHOLD_DAYS
+    return is_accelerated_in(event.days_until_event)
 
 
 def parse_date(value: object) -> date | None:
@@ -84,16 +94,12 @@ def build_timeline(
             continue
 
         is_follow_up = bool(raw.is_follow_up)
-        if due > event_date:
-            if is_follow_up:
-                pass  # Legitimately after the event.
-            else:
-                # A preparation task must not fall after the event (§10.3).
-                due = event_date
-                clamped += 1
-        elif due < today:
-            # Deadline already passed — surfaced as overdue, not as a future date.
-            pass
+        # A preparation task must not fall after the event (§10.3). A follow-up
+        # legitimately does, and a date already in the past is left alone: it
+        # is surfaced as overdue rather than rewritten into the future.
+        if due > event_date and not is_follow_up:
+            due = event_date
+            clamped += 1
 
         parsed.append(
             TimelineItemOut(

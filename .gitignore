@@ -35,4 +35,6 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
-spec.md 
+
+# Cortex Code session artifacts (plans, local agent state) — kept local
+.snowflake/

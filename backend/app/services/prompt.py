@@ -112,23 +112,23 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
     cur = event.currency
 
     lines: list[str] = []
-    a = lines.append
+    line = lines.append
 
-    a(f"Create a complete {label.lower()} plan.")
-    a("")
-    a("## Event details")
-    a(f"- Event type: {label}")
+    line(f"Create a complete {label.lower()} plan.")
+    line("")
+    line("## Event details")
+    line(f"- Event type: {label}")
     name = quote_user_text(event.event_name) if event.event_name else "(not provided)"
-    a(f"- Event name: {name}")
-    a(f"- Event date: {event.event_date.isoformat()}")
-    a(f"- Today's date: {today.isoformat()}")
-    a(f"- Days available to prepare: {days}")
-    a(f"- Total budget: {cur} {event.budget:,.0f} (this is the hard ceiling)")
-    a(f"- Currency: {cur}")
-    a(f"- Guest count: {event.guest_count}")
-    a(f"- Budget per guest: approximately {cur} {event.budget / max(1, event.guest_count):,.0f}")
-    a(f"- Location: {quote_user_text(event.location)}")
-    a(
+    line(f"- Event name: {name}")
+    line(f"- Event date: {event.event_date.isoformat()}")
+    line(f"- Today's date: {today.isoformat()}")
+    line(f"- Days available to prepare: {days}")
+    line(f"- Total budget: {cur} {event.budget:,.0f} (this is the hard ceiling)")
+    line(f"- Currency: {cur}")
+    line(f"- Guest count: {event.guest_count}")
+    line(f"- Budget per guest: approximately {cur} {event.budget / max(1, event.guest_count):,.0f}")
+    line(f"- Location: {quote_user_text(event.location)}")
+    line(
         "- Theme: "
         + (
             quote_user_text(event.theme)
@@ -138,102 +138,102 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
     )
 
     if event.preferences:
-        a("- Stated preferences:")
+        line("- Stated preferences:")
         for pref in event.preferences:
-            a(f"    - {quote_user_text(pref)}")
+            line(f"    - {quote_user_text(pref)}")
     if event.venue_preference:
         # A closed enum, so it is not user free text.
-        a(f"- Venue preference: {event.venue_preference}")
+        line(f"- Venue preference: {event.venue_preference}")
     if event.food_preference:
-        a(f"- Food preference: {quote_user_text(event.food_preference)}")
+        line(f"- Food preference: {quote_user_text(event.food_preference)}")
     if event.cultural_preferences:
-        a(f"- Cultural preferences: {quote_user_text(event.cultural_preferences)}")
+        line(f"- Cultural preferences: {quote_user_text(event.cultural_preferences)}")
     if event.accessibility_needs:
-        a(f"- Accessibility requirements: {quote_user_text(event.accessibility_needs)}")
+        line(f"- Accessibility requirements: {quote_user_text(event.accessibility_needs)}")
     if event.must_have_activities:
-        a(f"- Must-have activities: {quote_user_text(event.must_have_activities)}")
+        line(f"- Must-have activities: {quote_user_text(event.must_have_activities)}")
     if event.constraints:
-        a(f"- Special constraints: {quote_user_text(event.constraints)}")
+        line(f"- Special constraints: {quote_user_text(event.constraints)}")
     if regeneration_note:
-        a(f"- Revision request from the user: {quote_user_text(regeneration_note)}")
+        line(f"- Revision request from the user: {quote_user_text(regeneration_note)}")
 
-    a("")
-    a("## 1. budget_breakdown")
-    a(f"- Split the {cur} {event.budget:,.0f} budget across 5 to 9 expense categories.")
-    a("- Use amounts as plain numbers, no currency symbols and no thousands separators.")
-    a("- Every amount must be a positive number.")
-    a(
+    line("")
+    line("## 1. budget_breakdown")
+    line(f"- Split the {cur} {event.budget:,.0f} budget across 5 to 9 expense categories.")
+    line("- Use amounts as plain numbers, no currency symbols and no thousands separators.")
+    line("- Every amount must be a positive number.")
+    line(
         "- Include exactly ONE category with is_reserve = true, named "
         "\"Emergency reserve\", sized at roughly 5-15% of the budget."
     )
-    a(
+    line(
         f"- The sum of ALL categories including the reserve must equal exactly "
         f"{event.budget:,.0f}. Add the numbers up before answering."
     )
-    a("- Scale amounts to the guest count; per-head costs must be realistic.")
-    a(f"- Relevant categories for a {label.lower()} may include:")
+    line("- Scale amounts to the guest count; per-head costs must be realistic.")
+    line(f"- Relevant categories for a {label.lower()} may include:")
     for hint in hints:
-        a(f"    - {hint}")
-    a(
+        line(f"    - {hint}")
+    line(
         "- Only include categories this specific event actually needs. Omit the rest "
         "rather than allocating a token amount."
     )
 
-    a("")
-    a("## 2. timeline")
+    line("")
+    line("## 2. timeline")
     if is_accelerated(event):
-        a(
+        line(
             f"- The event is only {days} day(s) away, which is under the normal "
             f"{ACCELERATED_THRESHOLD_DAYS}-day planning window. Produce an "
             "ACCELERATED schedule: fewer, larger, tightly packed tasks."
         )
     else:
-        a("- Produce 6 to 10 preparation tasks spread across the available time.")
+        line("- Produce 6 to 10 preparation tasks spread across the available time.")
     event_day = event.event_date.isoformat()
-    a(
+    line(
         f"- Every due_date must be an ISO date between {today.isoformat()} "
         f"and {event_day}."
     )
-    a("- Order tasks from earliest to latest.")
-    a(f"- Include setting up and hosting on the event date itself ({event_day}).")
-    a(
+    line("- Order tasks from earliest to latest.")
+    line(f"- Include setting up and hosting on the event date itself ({event_day}).")
+    line(
         "- If a task genuinely belongs after the event (returning rentals, sharing "
         "photos, thank-you messages), set is_follow_up = true; only then may its "
         "due_date fall after the event date."
     )
-    a("- priority must be one of: high, medium, low.")
+    line("- priority must be one of: high, medium, low.")
 
-    a("")
-    a("## 3. vendor_checklist")
-    a(f"- List 6 to 12 services, supplies, and arrangements a {label.lower()} needs.")
-    a("- Each item names a vendor or task CATEGORY, never a real business.")
-    a("- Adapt the list to this event; omit categories that do not apply.")
-    a("- Write each title as an action the user can tick off.")
-    a("- priority must be one of: high, medium, low.")
+    line("")
+    line("## 3. vendor_checklist")
+    line(f"- List 6 to 12 services, supplies, and arrangements a {label.lower()} needs.")
+    line("- Each item names a vendor or task CATEGORY, never a real business.")
+    line("- Adapt the list to this event; omit categories that do not apply.")
+    line("- Write each title as an action the user can tick off.")
+    line("- priority must be one of: high, medium, low.")
 
-    a("")
-    a("## 4. personalized_ideas")
-    a("- Provide 6 to 10 concrete ideas tailored to the theme, budget, and guest count.")
-    a("- Spread them across these categories:")
+    line("")
+    line("## 4. personalized_ideas")
+    line("- Provide 6 to 10 concrete ideas tailored to the theme, budget, and guest count.")
+    line("- Spread them across these categories:")
     for cat in IDEA_CATEGORIES:
-        a(f"    - {cat}")
-    a("- Include at least two budget-saving alternatives.")
-    a(
+        line(f"    - {cat}")
+    line("- Include at least two budget-saving alternatives.")
+    line(
         "- estimated_cost is optional; include it only when a rough figure is "
         f"genuinely useful, as a plain number in {cur}."
     )
 
-    a("")
-    a("## 5. assumptions and warnings")
-    a("- assumptions: 2 to 5 plain-language notes about what you assumed.")
-    a(
+    line("")
+    line("## 5. assumptions and warnings")
+    line("- assumptions: 2 to 5 plain-language notes about what you assumed.")
+    line(
         "- warnings: 0 to 4 genuine risks for this plan, such as a tight budget per "
         "guest, a short preparation window, or seasonal availability. Do not repeat "
         "the generic estimate disclaimer here."
     )
 
-    a("")
-    a(
+    line("")
+    line(
         f"Remember: all figures are estimates for {quote_user_text(event.location)}, "
         "not verified quotations, and no vendor has been contacted."
     )

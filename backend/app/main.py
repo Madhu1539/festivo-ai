@@ -1,7 +1,9 @@
-"""Festivo AI backend (§14.2).
+"""Festivo AI backend: application assembly (§14.2).
 
-Pipeline: validate input -> build prompt -> call Gemini -> validate schema
--> validate dates -> recompute budget -> return plan (§13.3).
+Wires configuration, middleware, error handlers and routers into the ASGI
+app. The plan-generation pipeline it serves — validate input, build prompt,
+call Gemini, validate schema, validate dates, recompute budget (§13.3) — lives
+in `services/planner.py`; nothing here performs any of those steps.
 """
 
 from __future__ import annotations

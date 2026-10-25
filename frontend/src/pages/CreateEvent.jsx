@@ -3,14 +3,15 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 
 import ErrorState from '../components/ErrorState'
-import EventForm, {
+import EventForm from '../components/EventForm'
+import LoadingState from '../components/LoadingState'
+import { usePlan } from '../context/PlanContext'
+import {
   EMPTY_FORM,
   fromEventInput,
   toEventInput,
   validateForm,
-} from '../components/EventForm'
-import LoadingState from '../components/LoadingState'
-import { usePlan } from '../context/PlanContext'
+} from '../forms/eventFormModel'
 import { eventApi } from '../services/eventApi'
 import { focusFirstInvalidAsync } from '../utils/focus'
 

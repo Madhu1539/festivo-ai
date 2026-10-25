@@ -16,167 +16,21 @@ import {
 
 import EventTypeCard from './EventTypeCard'
 import {
-  AI_THEME_OPTION,
   EVENT_TYPES,
   VENUE_OPTIONS,
   preferenceOptions,
   themeOptions,
 } from '../constants/eventTypes'
-import {
-  budgetAdvisory,
-  validateBudget,
-  validateGuestCount,
-} from '../utils/budgetValidation'
+import { CUSTOM_THEME } from '../forms/eventFormModel'
+import { budgetAdvisory } from '../utils/budgetValidation'
 import {
   formatLongDate,
   formatRelativeDays,
   isAccelerated,
   maxEventDateIso,
   todayIso,
-  validateEventDate,
 } from '../utils/dateValidation'
 import { currencySymbol } from '../utils/format'
-
-const CUSTOM_THEME = '__custom__'
-
-export const EMPTY_FORM = {
-  event_type: '',
-  event_name: '',
-  event_date: '',
-  budget: '',
-  currency: 'INR',
-  guest_count: '',
-  location: '',
-  theme: '',
-  customTheme: '',
-  preferenceChips: [],
-  preferencesText: '',
-  venue_preference: '',
-  food_preference: '',
-  accessibility_needs: '',
-  cultural_preferences: '',
-  must_have_activities: '',
-  constraints: '',
-}
-
-/**
- * The optional free-text requirement fields, in form order.
- *
- * Exported so every place that has to round-trip an input — the form, and the
- * saved-plan rebuild on the plan screen — works from one list instead of
- * repeating it and drifting.
- */
-export const OPTIONAL_INPUT_FIELDS = [
-  'venue_preference',
-  'food_preference',
-  'accessibility_needs',
-  'cultural_preferences',
-  'must_have_activities',
-  'constraints',
-]
-
-/** Validates the whole form (§7.4 form behavior). */
-export function validateForm(values) {
-  const errors = {}
-
-  if (!values.event_type) errors.event_type = 'Please choose an event type.'
-
-  const dateError = validateEventDate(values.event_date)
-  if (dateError) errors.event_date = dateError
-
-  const budgetError = validateBudget(values.budget)
-  if (budgetError) errors.budget = budgetError
-
-  const guestError = validateGuestCount(values.guest_count)
-  if (guestError) errors.guest_count = guestError
-
-  const location = values.location.trim()
-  if (!location) errors.location = 'Please enter the city or venue area.'
-  else if (location.length < 2) errors.location = 'Please enter a longer location.'
-
-  if (values.theme === CUSTOM_THEME && !values.customTheme.trim()) {
-    errors.theme = 'Please describe your theme, or pick one from the list.'
-  }
-  if (values.event_name.length > 160) {
-    errors.event_name = 'Event name is too long (160 characters maximum).'
-  }
-
-  return errors
-}
-
-/** Maps form state onto the API input contract (§8.1). */
-export function toEventInput(values) {
-  const chosenTheme =
-    values.theme === CUSTOM_THEME
-      ? values.customTheme.trim()
-      : values.theme === AI_THEME_OPTION
-        ? ''
-        : values.theme
-
-  const freeformPreferences = values.preferencesText
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-
-  const preferences = [
-    ...new Set([...values.preferenceChips, ...freeformPreferences]),
-  ].slice(0, 25)
-
-  const optional = (value) => {
-    const text = (value ?? '').trim()
-    return text ? text : null
-  }
-
-  return {
-    event_type: values.event_type,
-    event_name: optional(values.event_name),
-    event_date: values.event_date,
-    budget: Number(values.budget),
-    currency: values.currency || 'INR',
-    guest_count: Number(values.guest_count),
-    location: values.location.trim(),
-    theme: optional(chosenTheme),
-    preferences,
-    venue_preference: values.venue_preference || null,
-    food_preference: optional(values.food_preference),
-    accessibility_needs: optional(values.accessibility_needs),
-    cultural_preferences: optional(values.cultural_preferences),
-    must_have_activities: optional(values.must_have_activities),
-    constraints: optional(values.constraints),
-  }
-}
-
-/** Rebuilds form state from a previously submitted input (for Edit / retry). */
-export function fromEventInput(input) {
-  if (!input) return { ...EMPTY_FORM }
-  const themes = themeOptions(input.event_type)
-  const theme = input.theme ?? ''
-
-  return {
-    ...EMPTY_FORM,
-    event_type: input.event_type ?? '',
-    event_name: input.event_name ?? '',
-    event_date: input.event_date ?? '',
-    budget: String(input.budget ?? ''),
-    currency: input.currency ?? 'INR',
-    guest_count: String(input.guest_count ?? ''),
-    location: input.location ?? '',
-    theme: !theme ? '' : themes.includes(theme) ? theme : CUSTOM_THEME,
-    customTheme: !theme || themes.includes(theme) ? '' : theme,
-    preferenceChips: (input.preferences ?? []).filter((p) =>
-      preferenceOptions(input.event_type).includes(p),
-    ),
-    preferencesText: (input.preferences ?? [])
-      .filter((p) => !preferenceOptions(input.event_type).includes(p))
-      .join(', '),
-    venue_preference: input.venue_preference ?? '',
-    food_preference: input.food_preference ?? '',
-    accessibility_needs: input.accessibility_needs ?? '',
-    cultural_preferences: input.cultural_preferences ?? '',
-    must_have_activities: input.must_have_activities ?? '',
-    constraints: input.constraints ?? '',
-  }
-}
 
 function FieldError({ id, message }) {
   if (!message) return null

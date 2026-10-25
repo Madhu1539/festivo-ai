@@ -13,7 +13,7 @@ import {
   fromEventInput,
   toEventInput,
   validateForm,
-} from '../src/components/EventForm'
+} from '../src/forms/eventFormModel'
 import { todayIso } from '../src/utils/dateValidation'
 import { AI_THEME_OPTION } from '../src/constants/eventTypes'
 

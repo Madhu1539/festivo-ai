@@ -45,7 +45,7 @@ def overview(db: Session = Depends(get_db)) -> PlanningOverviewOut:
 
 @router.post("", response_model=SavedEventOut, status_code=201)
 def save(payload: SaveEventRequest, db: Session = Depends(get_db)) -> SavedEventOut:
-    """§15.4"""
+    """Persist a generated plan with the input that produced it (§15.4)."""
     row = storage.save_event(db, payload.event, payload.plan)
     return SavedEventOut(
         id=row.id,
@@ -57,17 +57,19 @@ def save(payload: SaveEventRequest, db: Session = Depends(get_db)) -> SavedEvent
 
 @router.get("", response_model=list[SavedEventListItemOut])
 def list_events(db: Session = Depends(get_db)) -> list[SavedEventListItemOut]:
-    """§15.5"""
+    """All saved events, newest first, with checklist progress (§15.5)."""
     return storage.list_saved_events(db)
 
 
 @router.get("/{event_id}", response_model=SavedEventOut)
 def get_event(event_id: str, db: Session = Depends(get_db)) -> SavedEventOut:
+    """One saved event, with its figures recomputed from stored rows."""
     return storage.get_saved_event(db, event_id)
 
 
 @router.delete("/{event_id}", status_code=204)
 def remove_event(event_id: str, db: Session = Depends(get_db)) -> None:
+    """Delete a saved event and everything belonging to it."""
     storage.delete_event(db, event_id)
 
 
@@ -81,7 +83,7 @@ def update_checklist_item(
     payload: ChecklistItemUpdate,
     db: Session = Depends(get_db),
 ) -> ChecklistItemOut:
-    """§15.6"""
+    """Toggle one checklist item's completion (§15.6)."""
     return storage.set_checklist_completion(
         db, event_id, item_id, payload.is_completed
     )
@@ -94,4 +96,5 @@ def update_timeline_item(
     payload: TimelineItemUpdate,
     db: Session = Depends(get_db),
 ) -> TimelineItemOut:
+    """Toggle one timeline item's completion."""
     return storage.set_timeline_completion(db, event_id, item_id, payload.is_completed)

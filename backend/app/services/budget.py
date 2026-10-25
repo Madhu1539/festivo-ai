@@ -12,7 +12,7 @@ Valid when P + R <= B.
 from __future__ import annotations
 
 import re
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal
 
 from ..models import new_id
 from ..schemas import (
@@ -21,25 +21,15 @@ from ..schemas import (
     BudgetOverviewOut,
     EventInput,
 )
+from .money import CENTS, to_decimal, to_float
 
-CENTS = Decimal("0.01")
 # Reserve is clamped to this share of the budget if the model proposes an
 # unusable reserve (e.g. larger than the budget itself).
 MAX_RESERVE_SHARE = Decimal("0.15")
 
-
-def _dec(value: object) -> Decimal:
-    try:
-        amount = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
-    if amount.is_nan() or amount.is_infinite():
-        return Decimal("0")
-    return amount.quantize(CENTS, rounding=ROUND_HALF_UP)
-
-
-def _money(value: Decimal) -> float:
-    return float(value.quantize(CENTS, rounding=ROUND_HALF_UP))
+# Leaving more than this share of the budget unspent is worth telling the user
+# about; below it, the remainder is rounding rather than a planning gap.
+UNALLOCATED_WARNING_SHARE = Decimal("0.05")
 
 
 _RESERVE_WORDS = frozenset(
@@ -111,11 +101,11 @@ def derive_overview(
     two paths cannot disagree about rounding either.
     """
     planned = sum(
-        (_dec(c.estimated_amount) for c in categories if not c.is_reserve),
+        (to_decimal(c.estimated_amount) for c in categories if not c.is_reserve),
         Decimal("0"),
     )
     reserve = sum(
-        (_dec(c.estimated_amount) for c in categories if c.is_reserve),
+        (to_decimal(c.estimated_amount) for c in categories if c.is_reserve),
         Decimal("0"),
     )
 
@@ -127,24 +117,34 @@ def derive_overview(
         return round(float(amount / budget * 100), 1) if budget > 0 else 0.0
 
     for category in categories:
-        category.percent_of_budget = pct(_dec(category.estimated_amount))
+        category.percent_of_budget = pct(to_decimal(category.estimated_amount))
 
     return BudgetOverviewOut(
         currency=currency,
-        total_budget=_money(budget),
-        planned_expenditure=_money(planned),
-        emergency_reserve=_money(reserve),
-        unallocated=_money(unallocated),
-        total_allocated=_money(allocated),
-        budget_per_guest=_money(budget / Decimal(max(1, guest_count))),
+        total_budget=to_float(budget),
+        planned_expenditure=to_float(planned),
+        emergency_reserve=to_float(reserve),
+        unallocated=to_float(unallocated),
+        total_allocated=to_float(allocated),
+        budget_per_guest=to_float(budget / Decimal(max(1, guest_count))),
         is_valid=not is_over,
         is_over_budget=is_over,
         # Clamped at zero: a negative "overage" is not a thing, and letting a
         # float rounding artefact through here would display as a tiny debt.
-        overage=_money(max(Decimal("0"), allocated - budget)) if is_over else 0.0,
+        overage=to_float(max(Decimal("0"), allocated - budget)) if is_over else 0.0,
         was_rescaled=was_rescaled,
         categories=categories,
     )
+
+
+# A cleaned category before it becomes a BudgetCategoryOut: (name, amount,
+# description). Kept as a tuple because it only exists inside this module.
+CategoryRow = tuple[str, Decimal, "str | None"]
+
+
+def _total(rows: list[CategoryRow]) -> Decimal:
+    """Sum the amounts of cleaned category rows."""
+    return sum((amount for _, amount, _ in rows), Decimal("0"))
 
 
 def build_budget(
@@ -152,17 +152,17 @@ def build_budget(
 ) -> tuple[BudgetOverviewOut, list[str]]:
     """Turn raw AI categories into a validated budget overview."""
     warnings: list[str] = []
-    budget = _dec(event.budget)
+    budget = to_decimal(event.budget)
 
     # --- 1. Clean the raw categories ---------------------------------------
-    planned: list[tuple[str, Decimal, str | None]] = []
+    planned: list[CategoryRow] = []
     reserve_total = Decimal("0")
     reserve_description: str | None = None
     dropped = 0
 
     for raw in categories:
         name = (raw.category or "").strip()
-        amount = _dec(raw.estimated_amount)
+        amount = to_decimal(raw.estimated_amount)
         if not name or amount <= 0:
             dropped += 1
             continue
@@ -182,10 +182,11 @@ def build_budget(
         warnings.append(
             "No usable budget categories were generated. Try regenerating the plan."
         )
-        return (
-            _overview(event, budget, [], Decimal("0"), None, False, warnings),
-            warnings,
+        overview, overview_warnings = _assemble_overview(
+            event, budget, [], Decimal("0"), None, False
         )
+        warnings.extend(overview_warnings)
+        return overview, warnings
 
     # --- 2. Clamp an unusable reserve --------------------------------------
     if reserve_total >= budget and budget > 0:
@@ -193,13 +194,13 @@ def build_budget(
             CENTS, rounding=ROUND_HALF_UP
         )
         warnings.append(
-            f"The generated emergency reserve ({event.currency} {_money(reserve_total):,.2f}) "
-            f"was not usable against a budget of {event.currency} {_money(budget):,.2f}. "
-            f"It has been reduced to {event.currency} {_money(clamped):,.2f}."
+            f"The generated emergency reserve ({event.currency} {to_float(reserve_total):,.2f}) "
+            f"was not usable against a budget of {event.currency} {to_float(budget):,.2f}. "
+            f"It has been reduced to {event.currency} {to_float(clamped):,.2f}."
         )
         reserve_total = clamped
 
-    planned_total = sum((amount for _, amount, _ in planned), Decimal("0"))
+    planned_total = _total(planned)
 
     # --- 3. Over-budget handling (§9.5) ------------------------------------
     was_rescaled = False
@@ -209,45 +210,41 @@ def build_budget(
         target = budget - reserve_total
         if target > 0 and planned_total > 0:
             planned = _rescale(planned, target)
-            planned_total = sum((amount for _, amount, _ in planned), Decimal("0"))
+            planned_total = _total(planned)
             was_rescaled = True
             warnings.append(
                 f"The generated allocation came to {event.currency} "
-                f"{_money(allocated):,.2f}, which is {event.currency} "
-                f"{_money(overage):,.2f} over your budget of {event.currency} "
-                f"{_money(budget):,.2f}. Category amounts have been scaled "
+                f"{to_float(allocated):,.2f}, which is {event.currency} "
+                f"{to_float(overage):,.2f} over your budget of {event.currency} "
+                f"{to_float(budget):,.2f}. Category amounts have been scaled "
                 "proportionally to fit. Your budget was not changed."
             )
         else:
             # Cannot rescale — surface the excess clearly instead.
             warnings.append(
                 f"The generated allocation exceeds your budget by {event.currency} "
-                f"{_money(overage):,.2f}. Please regenerate the plan or raise the budget."
+                f"{to_float(overage):,.2f}. Please regenerate the plan or raise the budget."
             )
 
-    return (
-        _overview(
-            event,
-            budget,
-            planned,
-            reserve_total,
-            reserve_description,
-            was_rescaled,
-            warnings,
-        ),
-        warnings,
+    overview, overview_warnings = _assemble_overview(
+        event,
+        budget,
+        planned,
+        reserve_total,
+        reserve_description,
+        was_rescaled,
     )
+    warnings.extend(overview_warnings)
+    return overview, warnings
 
 
-def _rescale(
-    planned: list[tuple[str, Decimal, str | None]], target: Decimal
-) -> list[tuple[str, Decimal, str | None]]:
+def _rescale(planned: list[CategoryRow], target: Decimal) -> list[CategoryRow]:
     """Scale categories to sum to exactly ``target``.
 
     Rounding residue is applied to the largest category so the total is exact
     and the result is deterministic (§9.2).
     """
-    current = sum((amount for _, amount, _ in planned), Decimal("0"))
+    current = _total(planned)
     if current <= 0:
         return planned
 
@@ -257,7 +254,7 @@ def _rescale(
         for name, amount, desc in planned
     ]
 
-    residual = target - sum((amount for _, amount, _ in scaled), Decimal("0"))
+    residual = target - _total(scaled)
     if residual != 0:
         largest = max(range(len(scaled)), key=lambda i: scaled[i][1])
         name, amount, desc = scaled[largest]
@@ -266,20 +263,24 @@ def _rescale(
     return scaled
 
 
-def _overview(
+def _assemble_overview(
     event: EventInput,
     budget: Decimal,
-    planned: list[tuple[str, Decimal, str | None]],
+    planned: list[CategoryRow],
     reserve: Decimal,
     reserve_description: str | None,
     was_rescaled: bool,
-    warnings: list[str],
-) -> BudgetOverviewOut:
+) -> tuple[BudgetOverviewOut, list[str]]:
+    """Build the overview, plus any warnings the finished figures reveal.
+
+    Returns the warnings rather than appending to a caller-owned list, so
+    `build_budget`'s result is assembled entirely in `build_budget`.
+    """
     categories = [
         BudgetCategoryOut(
             id=new_id(),
             category=name,
-            estimated_amount=_money(amount),
+            estimated_amount=to_float(amount),
             description=desc,
             is_reserve=False,
             # Set by derive_overview, which owns the arithmetic.
@@ -293,7 +294,7 @@ def _overview(
             BudgetCategoryOut(
                 id=new_id(),
                 category="Emergency reserve",
-                estimated_amount=_money(reserve),
+                estimated_amount=to_float(reserve),
                 description=reserve_description
                 or "Set aside for last-minute or unforeseen costs.",
                 is_reserve=True,
@@ -309,19 +310,29 @@ def _overview(
         was_rescaled=was_rescaled,
     )
 
-    unallocated = _dec(overview.unallocated)
-    if unallocated > 0 and budget > 0 and unallocated / budget >= Decimal("0.05"):
+    unallocated = to_decimal(overview.unallocated)
+    overview_warnings: list[str] = []
+    if (
+        unallocated > 0
+        and budget > 0
+        and unallocated / budget >= UNALLOCATED_WARNING_SHARE
+    ):
         share = round(float(unallocated / budget * 100), 1)
-        warnings.append(
+        overview_warnings.append(
             f"{event.currency} {overview.unallocated:,.2f} of your budget "
             f"({share:.1f}%) is still unallocated."
         )
 
-    return overview
+    return overview, overview_warnings
 
 
 def progress_percent(completed: int, total: int) -> float:
-    """§11.4 — safe against an empty checklist."""
+    """§11.4 — safe against an empty checklist.
+
+    Lives here rather than in schemas.py, which would be its natural home,
+    because schemas.py must not import from services: the services import
+    schemas, and reversing that would create a cycle.
+    """
     if total <= 0:
         return 0.0
     return round(completed / total * 100, 1)

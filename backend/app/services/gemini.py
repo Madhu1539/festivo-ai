@@ -61,7 +61,9 @@ class GeminiClient:
             },
         }
         # Thinking tokens are billed against maxOutputTokens and can truncate
-        # structured output, so the budget is explicit rather than defaulted.
+        # structured output, so a non-negative setting is sent explicitly.
+        # A negative setting omits thinkingConfig entirely, which leaves the
+        # model on its own default rather than disabling thinking.
         if self._settings.gemini_thinking_budget >= 0:
             payload["generationConfig"]["thinkingConfig"] = {
                 "thinkingBudget": self._settings.gemini_thinking_budget
@@ -111,8 +113,7 @@ class GeminiClient:
             raise AIUnavailable(
                 "The plan request was rejected by the AI provider. Please try again."
             )
-        if status in (500, 502, 503, 504):
-            raise AIUnavailable()
+        # Everything else, 5xx included, is an unavailable provider.
         raise AIUnavailable()
 
     def _extract_json(self, body: dict[str, Any]) -> dict[str, Any]:

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError
@@ -43,12 +42,13 @@ from .timeline import build_timeline, is_accelerated
 
 log = logging.getLogger("festivo.planner")
 
-MAX_CHECKLIST_ITEMS = 20
-MAX_IDEAS = 14
+# How many of each section we ask the model to produce. Distinct from the
+# identically-shaped bounds in schemas.py, which are abuse limits on the save
+# path rather than generation targets - the two must not be collapsed.
+GENERATED_CHECKLIST_LIMIT = 20
+GENERATED_IDEA_LIMIT = 14
 MAX_ASSUMPTIONS = 6
 MAX_WARNINGS = 8
-# Over-budget by more than this share is worth one correction round-trip.
-REPAIR_OVERAGE_THRESHOLD = Decimal("0.02")
 
 
 async def generate_plan(
@@ -150,14 +150,10 @@ def _assemble(
             f"The allocation exceeds the budget by {budget.overage:.2f} "
             f"{event.currency}."
         )
-    elif budget.was_rescaled:
-        total = Decimal(str(event.budget))
-        overage = Decimal(str(budget.overage or 0))
-        if total > 0 and (overage / total) > REPAIR_OVERAGE_THRESHOLD:
-            problems.append(
-                "Budget categories did not sum to the stated budget and had to "
-                "be rescaled."
-            )
+    # Rescaling on its own is deliberately NOT a reason to retry. The amounts
+    # have already been fitted to the budget and every total recomputed, so the
+    # plan is correct; asking the model again would spend another call to
+    # arrive at the same place.
 
     summary = EventSummaryOut(
         event_type=event.event_type,
@@ -187,10 +183,10 @@ def _assemble(
         timeline=timeline,
         vendor_checklist=checklist,
         personalized_ideas=ideas,
-        assumptions=_trim(_clean_notes(ai_plan.assumptions), MAX_ASSUMPTIONS),
+        assumptions=_trim(ai_plan.assumptions, MAX_ASSUMPTIONS),
         warnings=_trim(
             [
-                *_clean_notes(ai_plan.warnings),
+                *ai_plan.warnings,
                 *budget_warnings,
                 *timeline_warnings,
             ],
@@ -224,7 +220,7 @@ def _build_checklist(items: list[AIChecklistItem]) -> list[ChecklistItemOut]:
                 is_completed=False,
             )
         )
-        if len(out) >= MAX_CHECKLIST_ITEMS:
+        if len(out) >= GENERATED_CHECKLIST_LIMIT:
             break
 
     rank = {"high": 0, "medium": 1, "low": 2}
@@ -253,27 +249,13 @@ def _build_ideas(items: list[AIIdea]) -> list[IdeaOut]:
                 estimated_cost=raw.estimated_cost,
             )
         )
-        if len(out) >= MAX_IDEAS:
+        if len(out) >= GENERATED_IDEA_LIMIT:
             break
     return out
 
 
-def _clean_notes(notes: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for note in notes:
-        text = (note or "").strip()
-        if not text:
-            continue
-        key = text.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        cleaned.append(text)
-    return cleaned
-
-
 def _trim(values: list[str], limit: int) -> list[str]:
+    """Strip, drop empties, drop case-insensitive duplicates, cap the length."""
     out: list[str] = []
     seen: set[str] = set()
     for value in values:

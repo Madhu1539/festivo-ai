@@ -12,7 +12,6 @@ import {
 import BudgetBreakdown from '../components/BudgetBreakdown'
 import BudgetOverview from '../components/BudgetOverview'
 import ErrorState from '../components/ErrorState'
-import { OPTIONAL_INPUT_FIELDS } from '../components/EventForm'
 import EventSummaryCard from '../components/EventSummaryCard'
 import LoadingState from '../components/LoadingState'
 import NoticeList from '../components/NoticeList'
@@ -27,6 +26,7 @@ import {
   withChecklistItem,
   withTimelineItem,
 } from '../context/PlanContext'
+import { OPTIONAL_INPUT_FIELDS } from '../forms/eventFormModel'
 import { eventApi } from '../services/eventApi'
 import { printPlan } from '../utils/exportPlan'
 

@@ -136,12 +136,12 @@ class EventInput(BaseModel):
             # and commas separate entries.
             value = value.replace("\n", ",").split(",")
         if isinstance(value, list):
-            seen: list[str] = []
+            cleaned: list[str] = []
             for item in value:
                 text = str(item).strip()
-                if text and text not in seen:
-                    seen.append(text)
-            return seen
+                if text and text not in cleaned:
+                    cleaned.append(text)
+            return cleaned
         return value
 
     @field_validator(

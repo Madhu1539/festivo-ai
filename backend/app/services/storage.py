@@ -7,7 +7,6 @@ produced by application code, never replayed from AI output (§13.2).
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -24,6 +23,7 @@ from ..models import (
 from ..schemas import (
     EVENT_TYPE_LABELS,
     BudgetCategoryOut,
+    BudgetOverviewOut,
     ChecklistItemOut,
     ChecklistProgressOut,
     EventInput,
@@ -37,9 +37,8 @@ from ..schemas import (
     TimelineItemOut,
 )
 from .budget import derive_overview, progress_percent
-from .timeline import ACCELERATED_THRESHOLD_DAYS
-
-CENTS = Decimal("0.01")
+from .money import to_decimal, to_float
+from .timeline import is_accelerated_in
 
 _OPTIONAL_INPUT_FIELDS = (
     "venue_preference",
@@ -51,29 +50,19 @@ _OPTIONAL_INPUT_FIELDS = (
 )
 
 
-def _dec(value: object) -> Decimal:
-    try:
-        return Decimal(str(value or 0)).quantize(CENTS, rounding=ROUND_HALF_UP)
-    except Exception:
-        return Decimal("0")
-
-
-def _money(value: Decimal) -> float:
-    return float(value.quantize(CENTS, rounding=ROUND_HALF_UP))
-
-
 # ---------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------
 
 
-def save_event(session: Session, event_input: EventInput, plan: EventPlan) -> Event:
-    row = Event(
+def _event_row(event_input: EventInput, plan: EventPlan) -> Event:
+    """The parent row. Child collections are attached by the builders below."""
+    return Event(
         id=new_id(),
         event_type=event_input.event_type,
         event_name=plan.event_summary.event_name,
         event_date=event_input.event_date,
-        budget=_dec(plan.budget.total_budget),
+        budget=to_decimal(plan.budget.total_budget),
         currency=event_input.currency,
         guest_count=event_input.guest_count,
         location=event_input.location,
@@ -81,7 +70,7 @@ def save_event(session: Session, event_input: EventInput, plan: EventPlan) -> Ev
         preferences=list(event_input.preferences),
         assumptions=list(plan.assumptions),
         warnings=list(plan.warnings),
-        emergency_reserve=_dec(plan.budget.emergency_reserve),
+        emergency_reserve=to_decimal(plan.budget.emergency_reserve),
         extra_inputs={
             **{
                 field: getattr(event_input, field)
@@ -94,59 +83,77 @@ def save_event(session: Session, event_input: EventInput, plan: EventPlan) -> Ev
         },
     )
 
-    for order, category in enumerate(plan.budget.categories):
-        row.budget_items.append(
-            BudgetItem(
-                id=category.id or new_id(),
-                category=category.category,
-                estimated_amount=_dec(category.estimated_amount),
-                description=category.description,
-                is_reserve=category.is_reserve,
-                sort_order=order,
-            )
-        )
 
-    for item in plan.timeline:
-        row.timeline_items.append(
-            TimelineItem(
-                id=item.id or new_id(),
-                title=item.title,
-                description=item.description,
-                due_date=item.due_date,
-                priority=item.priority,
-                is_completed=item.is_completed,
-                is_follow_up=item.is_follow_up,
-            )
+def _budget_rows(plan: EventPlan) -> list[BudgetItem]:
+    return [
+        BudgetItem(
+            id=category.id or new_id(),
+            category=category.category,
+            estimated_amount=to_decimal(category.estimated_amount),
+            description=category.description,
+            is_reserve=category.is_reserve,
+            sort_order=order,
         )
+        for order, category in enumerate(plan.budget.categories)
+    ]
 
-    for order, item in enumerate(plan.vendor_checklist):
-        row.checklist_items.append(
-            ChecklistItem(
-                id=item.id or new_id(),
-                category=item.category,
-                title=item.title,
-                description=item.description,
-                priority=item.priority,
-                is_completed=item.is_completed,
-                sort_order=order,
-            )
-        )
 
-    for order, idea in enumerate(plan.personalized_ideas):
-        row.ideas.append(
-            PersonalizedIdea(
-                id=idea.id or new_id(),
-                category=idea.category,
-                title=idea.title,
-                description=idea.description,
-                estimated_cost=(
-                    _dec(idea.estimated_cost)
-                    if idea.estimated_cost is not None
-                    else None
-                ),
-                sort_order=order,
-            )
+def _timeline_rows(plan: EventPlan) -> list[TimelineItem]:
+    # No sort_order: timeline items are ordered by due_date on read, not by
+    # their position in the generated list.
+    return [
+        TimelineItem(
+            id=item.id or new_id(),
+            title=item.title,
+            description=item.description,
+            due_date=item.due_date,
+            priority=item.priority,
+            is_completed=item.is_completed,
+            is_follow_up=item.is_follow_up,
         )
+        for item in plan.timeline
+    ]
+
+
+def _checklist_rows(plan: EventPlan) -> list[ChecklistItem]:
+    return [
+        ChecklistItem(
+            id=item.id or new_id(),
+            category=item.category,
+            title=item.title,
+            description=item.description,
+            priority=item.priority,
+            is_completed=item.is_completed,
+            sort_order=order,
+        )
+        for order, item in enumerate(plan.vendor_checklist)
+    ]
+
+
+def _idea_rows(plan: EventPlan) -> list[PersonalizedIdea]:
+    return [
+        PersonalizedIdea(
+            id=idea.id or new_id(),
+            category=idea.category,
+            title=idea.title,
+            description=idea.description,
+            estimated_cost=(
+                to_decimal(idea.estimated_cost)
+                if idea.estimated_cost is not None
+                else None
+            ),
+            sort_order=order,
+        )
+        for order, idea in enumerate(plan.personalized_ideas)
+    ]
+
+
+def save_event(session: Session, event_input: EventInput, plan: EventPlan) -> Event:
+    row = _event_row(event_input, plan)
+    row.budget_items.extend(_budget_rows(plan))
+    row.timeline_items.extend(_timeline_rows(plan))
+    row.checklist_items.extend(_checklist_rows(plan))
+    row.ideas.extend(_idea_rows(plan))
 
     session.add(row)
     # Commit before the response is produced, so the client is never told a
@@ -216,13 +223,11 @@ def list_saved_events(session: Session) -> list[SavedEventListItemOut]:
             SavedEventListItemOut(
                 id=row.id,
                 event_type=_event_type(row.event_type),
-                event_type_label=EVENT_TYPE_LABELS.get(
-                    row.event_type, row.event_type.title()
-                ),
+                event_type_label=_event_type_label(row.event_type),
                 event_name=row.event_name or "Untitled event",
                 event_date=row.event_date,
                 location=row.location,
-                budget=_money(_dec(row.budget)),
+                budget=to_float(to_decimal(row.budget)),
                 currency=row.currency,
                 guest_count=row.guest_count,
                 days_until_event=(row.event_date - today).days,
@@ -273,38 +278,16 @@ def planning_overview(session: Session) -> PlanningOverviewOut:
         persistence_enabled=True,
         total_events=int(total),
         upcoming_events=int(upcoming),
-        total_planned_budget=_money(_dec(budget_sum)),
+        total_planned_budget=to_float(to_decimal(budget_sum)),
         currency=currency,
         average_progress=progress_percent(int(checklist_done), int(checklist_total)),
-    )
-
-
-def event_input_from_row(row: Event) -> EventInput:
-    """Rebuild the original input so a saved plan can be regenerated (§15.3)."""
-    extra = row.extra_inputs or {}
-    return EventInput(
-        event_type=_event_type(row.event_type),
-        event_name=row.event_name,
-        # A saved event may now be in the past; clamp so input validation passes.
-        event_date=max(row.event_date, date.today()),
-        budget=_money(_dec(row.budget)),
-        currency=row.currency,
-        guest_count=row.guest_count,
-        location=row.location,
-        theme=row.theme,
-        preferences=list(row.preferences or []),
-        **{
-            field: extra.get(field)
-            for field in _OPTIONAL_INPUT_FIELDS
-            if extra.get(field)
-        },
     )
 
 
 def plan_from_row(row: Event) -> EventPlan:
     """Reconstruct a plan, re-deriving every total locally."""
     today = date.today()
-    budget_total = _dec(row.budget)
+    budget_total = to_decimal(row.budget)
 
     # Categories are rebuilt from the stored rows; every total is then derived
     # by the same function the generation path uses, so a saved plan can never
@@ -313,7 +296,7 @@ def plan_from_row(row: Event) -> EventPlan:
         BudgetCategoryOut(
             id=item.id,
             category=item.category,
-            estimated_amount=_money(_dec(item.estimated_amount)),
+            estimated_amount=to_float(to_decimal(item.estimated_amount)),
             description=item.description,
             is_reserve=item.is_reserve,
             percent_of_budget=0.0,  # Set by derive_overview.
@@ -342,38 +325,11 @@ def plan_from_row(row: Event) -> EventPlan:
         for i in sorted(row.checklist_items, key=lambda i: i.sort_order)
     ]
     ideas = [
-        IdeaOut(
-            id=i.id,
-            category=i.category,
-            title=i.title,
-            description=i.description,
-            estimated_cost=(
-                _money(_dec(i.estimated_cost)) if i.estimated_cost is not None else None
-            ),
-        )
-        for i in sorted(row.ideas, key=lambda i: i.sort_order)
+        _idea_out(i) for i in sorted(row.ideas, key=lambda i: i.sort_order)
     ]
 
     days_until = (row.event_date - today).days
-    stored_extra = row.extra_inputs or {}
-    summary = EventSummaryOut(
-        event_type=_event_type(row.event_type),
-        event_type_label=EVENT_TYPE_LABELS.get(row.event_type, row.event_type.title()),
-        event_name=row.event_name or "Untitled event",
-        event_date=row.event_date,
-        location=row.location,
-        guest_count=row.guest_count,
-        budget=_money(budget_total),
-        currency=row.currency,
-        theme=row.theme,
-        preferences=list(row.preferences or []),
-        days_until_event=days_until,
-        budget_per_guest=budget.budget_per_guest,
-        is_accelerated=0 <= days_until <= ACCELERATED_THRESHOLD_DAYS,
-        # Echo the stored optional requirements so the client can offer an
-        # accurate edit/regenerate without silently dropping them.
-        **{field: stored_extra.get(field) for field in _OPTIONAL_INPUT_FIELDS},
-    )
+    summary = _summary_from_row(row, budget, days_until)
 
     return EventPlan(
         event_summary=summary,
@@ -384,6 +340,30 @@ def plan_from_row(row: Event) -> EventPlan:
         assumptions=list(row.assumptions or []),
         warnings=list(row.warnings or []),
         generated_at=row.created_at,
+    )
+
+
+def _summary_from_row(
+    row: Event, budget: BudgetOverviewOut, days_until: int
+) -> EventSummaryOut:
+    stored_extra = row.extra_inputs or {}
+    return EventSummaryOut(
+        event_type=_event_type(row.event_type),
+        event_type_label=_event_type_label(row.event_type),
+        event_name=row.event_name or "Untitled event",
+        event_date=row.event_date,
+        location=row.location,
+        guest_count=row.guest_count,
+        budget=budget.total_budget,
+        currency=row.currency,
+        theme=row.theme,
+        preferences=list(row.preferences or []),
+        days_until_event=days_until,
+        budget_per_guest=budget.budget_per_guest,
+        is_accelerated=is_accelerated_in(days_until),
+        # Echo the stored optional requirements so the client can offer an
+        # accurate edit/regenerate without silently dropping them.
+        **{field: stored_extra.get(field) for field in _OPTIONAL_INPUT_FIELDS},
     )
 
 
@@ -411,5 +391,31 @@ def _checklist_out(item: ChecklistItem) -> ChecklistItemOut:
     )
 
 
+def _idea_out(item: PersonalizedIdea) -> IdeaOut:
+    return IdeaOut(
+        id=item.id,
+        category=item.category,
+        title=item.title,
+        description=item.description,
+        # None and zero are different things here: None means the model gave no
+        # estimate, which the UI renders differently from "free".
+        estimated_cost=(
+            to_float(to_decimal(item.estimated_cost))
+            if item.estimated_cost is not None
+            else None
+        ),
+    )
+
+
 def _event_type(value: str) -> EventType:
     return value if value in EVENT_TYPE_LABELS else "community"  # type: ignore[return-value]
+
+
+def _event_type_label(value: str) -> str:
+    """The label for a stored event type, derived from the coerced type.
+
+    Going through `_event_type` matters: labelling the raw column instead
+    would let a row come back as type "community" labelled "Gala", which is
+    self-contradicting output rather than a graceful fallback.
+    """
+    return EVENT_TYPE_LABELS[_event_type(value)]

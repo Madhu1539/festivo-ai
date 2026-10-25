@@ -28,9 +28,20 @@ MAX_BODY_BYTES = 64 * 1024
 # larger than an input form.
 MAX_PLAN_BODY_BYTES = 512 * 1024
 
+# The save endpoint, matched by suffix so the /api prefix stays in one place.
+_SAVE_PLAN_PATH_SUFFIX = "/events"
+
+# Above this many tracked clients, sweep the empty deques. Purely bookkeeping:
+# it bounds memory on a long-running process and never affects a decision.
+_TRACKED_CLIENT_SWEEP_THRESHOLD = 1024
+
 
 def _body_limit_for(path: str) -> int:
-    return MAX_PLAN_BODY_BYTES if path.rstrip("/").endswith("/events") else MAX_BODY_BYTES
+    return (
+        MAX_PLAN_BODY_BYTES
+        if path.rstrip("/").endswith(_SAVE_PLAN_PATH_SUFFIX)
+        else MAX_BODY_BYTES
+    )
 
 
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
@@ -121,7 +132,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Keep the bookkeeping from growing without bound on a long-running
         # process: an empty deque for a departed client is pure overhead.
-        if len(self._hits) > 1024:
+        if len(self._hits) > _TRACKED_CLIENT_SWEEP_THRESHOLD:
             for key in [k for k, v in self._hits.items() if not v]:
                 del self._hits[key]
 

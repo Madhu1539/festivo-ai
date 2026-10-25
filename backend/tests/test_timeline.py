@@ -5,7 +5,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from app.schemas import AITimelineItem
-from app.services.timeline import build_timeline, is_accelerated, parse_date
+from app.services.timeline import (
+    ACCELERATED_THRESHOLD_DAYS,
+    build_timeline,
+    is_accelerated,
+    is_accelerated_in,
+    parse_date,
+)
 
 
 def item(title, due_date, **kwargs):
@@ -155,3 +161,27 @@ def test_parse_date_accepts_common_formats():
     assert parse_date("tomorrow") is None
     assert parse_date(None) is None
     assert parse_date(42) is None
+
+
+# --- The accelerated rule has one definition -----------------------------
+
+
+def test_accelerated_is_bounded_at_both_ends():
+    """An event already past is not "accelerated", it is over.
+
+    This used to be defined twice, with only one of the two definitions
+    carrying the lower bound, so a saved event could report one answer on the
+    generate path and the opposite on the read path.
+    """
+    assert is_accelerated_in(0) is True
+    assert is_accelerated_in(ACCELERATED_THRESHOLD_DAYS) is True
+    assert is_accelerated_in(ACCELERATED_THRESHOLD_DAYS + 1) is False
+    assert is_accelerated_in(-1) is False
+    assert is_accelerated_in(-500) is False
+
+
+def test_the_event_wrapper_delegates_to_the_same_rule(event_input):
+    """`is_accelerated(event)` must not drift from `is_accelerated_in(days)`."""
+    for offset in (0, 3, ACCELERATED_THRESHOLD_DAYS, ACCELERATED_THRESHOLD_DAYS + 1, 90):
+        event = event_input(event_date=date.today() + timedelta(days=offset))
+        assert is_accelerated(event) is is_accelerated_in(event.days_until_event)

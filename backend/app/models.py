@@ -44,15 +44,18 @@ class Event(Base):
     guest_count: Mapped[int] = mapped_column(Integer, nullable=False)
     location: Mapped[str] = mapped_column(String(240), nullable=False)
     theme: Mapped[str | None] = mapped_column(String(120))
-    preferences: Mapped[list] = mapped_column(JSON, default=list)
+    preferences: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     # Plan-level context produced by the generation pipeline.
-    assumptions: Mapped[list] = mapped_column(JSON, default=list)
-    warnings: Mapped[list] = mapped_column(JSON, default=list)
+    assumptions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
     emergency_reserve: Mapped[float] = mapped_column(
         Numeric(14, 2), nullable=False, default=0
     )
-    extra_inputs: Mapped[dict] = mapped_column(JSON, default=dict)
+    # The optional free-text requirements, keyed by field name, plus the
+    # "was_rescaled" flag. Schemaless on purpose: a new optional requirement
+    # should not need a migration.
+    extra_inputs: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

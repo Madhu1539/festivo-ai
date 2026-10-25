@@ -11,7 +11,8 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 
-import EventForm, { EMPTY_FORM } from '../src/components/EventForm'
+import EventForm from '../src/components/EventForm'
+import { EMPTY_FORM } from '../src/forms/eventFormModel'
 import { focusFirstInvalid } from '../src/utils/focus'
 
 const renderForm = (errors) => {

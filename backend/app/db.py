@@ -23,7 +23,7 @@ from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -32,8 +32,14 @@ from .errors import StorageUnavailable
 
 log = logging.getLogger("festivo.db")
 
+# Recycle connections well inside the idle timeout a cloud proxy typically
+# enforces, so a stale socket is replaced rather than handed to a request.
+_POOL_RECYCLE_SECONDS = 300
+_CONNECT_TIMEOUT_SECONDS = 10
 
-def _parse(url: str):
+
+def _parse(url: str) -> URL | None:
+    """Parse a database URL, or None when it is not parseable."""
     try:
         return make_url(url)
     except Exception:
@@ -82,13 +88,17 @@ def get_engine() -> Engine:
     url = normalize_database_url(settings.database_url)
     kwargs: dict[str, Any] = {"echo": settings.db_echo, "future": True}
 
+    # Recycle below the typical cloud-proxy idle timeout, and pre-ping so a
+    # connection the proxy dropped is replaced rather than handed out dead.
+    pooling = {"pool_pre_ping": True, "pool_recycle": _POOL_RECYCLE_SECONDS}
+
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     elif _is_pooler_host(url):
         # Neither pooler mode supports server-side prepared statements.
         connect_args: dict[str, Any] = {
             "prepare_threshold": None,
-            "connect_timeout": 10,
+            "connect_timeout": _CONNECT_TIMEOUT_SECONDS,
         }
         if _is_transaction_pooler(url):
             # Transaction mode (6543): a server connection is only ours for the
@@ -96,14 +106,12 @@ def get_engine() -> Engine:
             kwargs["poolclass"] = NullPool
         else:
             # Session mode (5432): the connection is ours, so pooling is safe.
-            kwargs["pool_pre_ping"] = True
-            kwargs["pool_recycle"] = 300
+            kwargs.update(pooling)
         kwargs["connect_args"] = connect_args
     else:
-        kwargs["pool_pre_ping"] = True
-        kwargs["pool_recycle"] = 300
+        kwargs.update(pooling)
         if url.startswith("postgresql"):
-            kwargs["connect_args"] = {"connect_timeout": 10}
+            kwargs["connect_args"] = {"connect_timeout": _CONNECT_TIMEOUT_SECONDS}
 
     return create_engine(url, **kwargs)
 

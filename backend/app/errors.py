@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -116,6 +116,9 @@ class RequestTooLarge(AppError):
 
 
 class RateLimited(AppError):
+    # Shares AIRateLimited's code deliberately: both mean "too many plan
+    # requests, wait and retry", and the client shows one message for them.
+    # Renaming the code would be a breaking API change for no user benefit.
     code = "AI_RATE_LIMITED"
     status_code = 429
     message = (
@@ -134,7 +137,7 @@ _HTTP_STATUS_CODES: dict[int, tuple[str, str]] = {
 }
 
 
-def register_error_handlers(app) -> None:
+def register_error_handlers(app: FastAPI) -> None:
     """Attach handlers so every failure uses the §15.7 envelope."""
 
     @app.exception_handler(AppError)
@@ -153,8 +156,10 @@ def register_error_handlers(app) -> None:
             for err in exc.errors()
         ]
         first = details[0]["message"] if details else InvalidEventInput.message
-        err = InvalidEventInput(first, details=details)
-        return JSONResponse(status_code=err.status_code, content=err.to_payload())
+        app_error = InvalidEventInput(first, details=details)
+        return JSONResponse(
+            status_code=app_error.status_code, content=app_error.to_payload()
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
