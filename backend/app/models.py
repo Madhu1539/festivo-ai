@@ -32,10 +32,60 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """A registered account.
+
+    `email` is stored already lower-cased by the service layer, so the unique
+    index doubles as case-insensitive uniqueness without needing CITEXT (which
+    SQLite, used for local development and tests, does not have).
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    # Self-describing digest: "scrypt$n$r$p$salt_b64$hash_b64". Keeping the
+    # parameters alongside the hash means the work factor can be raised later
+    # and existing hashes still verify against their original settings.
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    sessions: Mapped[list[Session]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class Session(Base):
+    """A logged-in session, identified by a token the client holds.
+
+    Only the SHA-256 of the token is stored. A database leak therefore yields
+    no usable sessions, and because the row exists server-side, signing out
+    revokes access immediately — which a self-contained JWT cannot do.
+    """
+
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="sessions")
+
+
 class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    # Nullable so the column can be added to a table that already has rows.
+    # Pre-authentication events keep NULL and match no owner filter, which
+    # takes them out of circulation rather than handing them to whoever asks.
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, default=None
+    )
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     event_name: Mapped[str | None] = mapped_column(String(160))
     event_date: Mapped[date] = mapped_column(Date, nullable=False)

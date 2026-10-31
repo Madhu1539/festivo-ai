@@ -22,7 +22,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -125,13 +125,47 @@ _schema_ready = False
 _schema_error: str | None = None
 
 
+def _add_missing_columns(engine: Engine) -> None:
+    """Add columns that `create_all` cannot, for tables that already exist.
+
+    `Base.metadata.create_all` creates missing *tables* and nothing else: it
+    will not add a column to a table it finds already present. A deployment
+    that predates `events.user_id` therefore keeps the old shape and every
+    owner-scoped query fails at runtime, which is a silent break rather than a
+    loud one.
+
+    This is deliberately not a migration framework. It handles exactly the
+    additive, nullable columns this application has introduced, and is a no-op
+    once they exist, so it is safe to run on every start.
+    """
+    inspector = inspect(engine)
+    if not inspector.has_table("events"):
+        return  # Fresh database: create_all already produced the right shape.
+
+    existing = {column["name"] for column in inspector.get_columns("events")}
+    if "user_id" in existing:
+        return
+
+    # No FK constraint is added here. Doing so on an existing table differs
+    # per backend and can fail on rows that predate the users table; the
+    # relationship is enforced by the ORM and by every query being scoped.
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE events ADD COLUMN user_id VARCHAR(32)"))
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_events_user_id ON events (user_id)")
+        )
+    log.info("Added events.user_id to an existing schema.")
+
+
 def init_database() -> None:
     """Create tables if possible. Never raises — persistence is optional."""
     global _schema_ready, _schema_error
     from .models import Base  # imported here to avoid a circular import
 
     try:
-        Base.metadata.create_all(bind=get_engine())
+        engine = get_engine()
+        Base.metadata.create_all(bind=engine)
+        _add_missing_columns(engine)
         _schema_ready = True
         _schema_error = None
         log.info("Database schema ready.")

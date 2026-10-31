@@ -17,8 +17,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import init_database
 from .errors import register_error_handlers
-from .middleware import BodySizeLimitMiddleware, RateLimitMiddleware
-from .routers import events, health
+from .middleware import (
+    BodySizeLimitMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
+from .routers import auth, events, health
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,16 +45,36 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # The interactive docs publish every route, including DELETE, to anyone
+    # who asks. That is useful while developing and is free reconnaissance on
+    # a public deployment, so they are switched off in production.
+    docs_enabled = not settings.is_production
+
     app = FastAPI(
         title=f"{settings.app_name} API",
         version="1.0.0",
         description="GenAI-powered celebration and event planner.",
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     # Middleware runs outermost-last, so these are added before CORS in order
     # for CORS headers to still be attached to a 429 or 413 response.
     if settings.rate_limit_enabled:
+        # Credential endpoints are limited for a different reason than the
+        # generation ones: not cost, but guessing. They get their own, much
+        # tighter budget, because ten password attempts a minute is already
+        # far more than a person needs and far less than a script wants.
+        app.add_middleware(
+            RateLimitMiddleware,
+            paths=("/auth/login", "/auth/register"),
+            max_requests=settings.auth_rate_limit_requests,
+            window_seconds=settings.auth_rate_limit_window_seconds,
+            trust_proxy=settings.trust_proxy_headers,
+        )
         app.add_middleware(
             RateLimitMiddleware,
             paths=("/events/generate-plan", "/events/regenerate-plan"),
@@ -60,6 +84,7 @@ def create_app() -> FastAPI:
         )
 
     app.add_middleware(BodySizeLimitMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     app.add_middleware(
         CORSMiddleware,
@@ -71,6 +96,7 @@ def create_app() -> FastAPI:
 
     register_error_handlers(app)
     app.include_router(health.router, prefix="/api")
+    app.include_router(auth.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
     return app
 

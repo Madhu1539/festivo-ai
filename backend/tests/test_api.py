@@ -12,8 +12,42 @@ from app.services import planner as planner_module
 
 
 @pytest.fixture(scope="module")
-def client():
+def anon_client():
+    """A client with no credentials, for checking endpoints are protected."""
     with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture(scope="module")
+def client():
+    """A signed-in client.
+
+    The saved-event endpoints require an account, so these tests register one
+    and send its token by default. That keeps each test about the behaviour it
+    is checking; authentication itself is covered in test_auth.py.
+    """
+    with TestClient(app) as test_client:
+        registered = test_client.post(
+            "/api/auth/register",
+            json={"email": "api-tests@example.com", "password": "a-long-enough-pass"},
+        )
+        assert registered.status_code == 201, registered.text
+        token = registered.json()["token"]
+        test_client.headers.update({"Authorization": f"Bearer {token}"})
+        yield test_client
+
+
+@pytest.fixture(scope="module")
+def other_client():
+    """A second signed-in account, for proving data is not shared."""
+    with TestClient(app) as test_client:
+        registered = test_client.post(
+            "/api/auth/register",
+            json={"email": "other-user@example.com", "password": "a-long-enough-pass"},
+        )
+        assert registered.status_code == 201, registered.text
+        token = registered.json()["token"]
+        test_client.headers.update({"Authorization": f"Bearer {token}"})
         yield test_client
 
 

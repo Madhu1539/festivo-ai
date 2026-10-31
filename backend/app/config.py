@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: float = 60.0
     rate_limit_enabled: bool = True
 
+    # Credential endpoints are limited against password guessing rather than
+    # cost, so they get a tighter budget than plan generation.
+    auth_rate_limit_requests: int = 10
+    auth_rate_limit_window_seconds: float = 60.0
+
     # Set to true when the app runs behind a reverse proxy that appends the
     # real client IP to X-Forwarded-For (Render, Fly, Heroku, nginx, ...).
     #
@@ -58,6 +63,15 @@ class Settings(BaseSettings):
     db_echo: bool = False
 
     @property
+    def is_production(self) -> bool:
+        """Whether this process is serving real users.
+
+        Drives the controls that are unhelpful in development but matter once
+        the service is reachable from the internet.
+        """
+        return self.environment.strip().lower() in {"production", "prod"}
+
+    @property
     def allowed_origins(self) -> list[str]:
         """The CORS allowlist, normalised to what a browser actually sends.
 
@@ -70,11 +84,25 @@ class Settings(BaseSettings):
         Trailing slashes are therefore stripped rather than treated as a
         configuration error. This only ever widens the match to the origin the
         operator plainly meant; it cannot admit an origin they did not list.
+
+        Values are also lower-cased, because browsers send the origin in lower
+        case: an entry typed as "HTTPS://Example.com" would otherwise match
+        nothing while looking perfectly correct in the dashboard.
         """
         origins: list[str] = []
         for raw in self.cors_origins.split(","):
-            origin = raw.strip().rstrip("/")
-            if origin and origin not in origins:
+            origin = raw.strip().rstrip("/").lower()
+            if not origin:
+                continue
+            if origin == "*" and self.is_production:
+                # A wildcard lets any site on the internet call this API and
+                # spend the account's model quota. Refusing at startup is
+                # louder, and easier to diagnose, than discovering it later.
+                raise ValueError(
+                    "CORS_ORIGINS must not be '*' in production. "
+                    "List the frontend origin explicitly."
+                )
+            if origin not in origins:
                 origins.append(origin)
         return origins
 

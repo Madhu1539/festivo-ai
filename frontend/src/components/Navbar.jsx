@@ -1,8 +1,25 @@
-import { NavLink, Link } from 'react-router-dom'
-import { CalendarHeart, LayoutDashboard, PartyPopper, Plus } from 'lucide-react'
+import { NavLink, Link, useNavigate } from 'react-router-dom'
+import {
+  CalendarHeart,
+  LayoutDashboard,
+  LogIn,
+  LogOut,
+  PartyPopper,
+  Plus,
+} from 'lucide-react'
+
+import { useAuth } from '../context/AuthContext'
 
 /** Branded navigation header (§7.3). */
 export default function Navbar() {
+  const { isAuthenticated, isRestoring, user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  const handleSignOut = async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }
+
   const linkClass = ({ isActive }) =>
     [
       'inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition-colors',
@@ -34,19 +51,50 @@ export default function Navbar() {
         </Link>
 
         <nav aria-label="Main" className="ml-auto flex shrink-0 items-center gap-1">
-          <NavLink to="/" end className={linkClass}>
-            <LayoutDashboard className="size-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Dashboard</span>
-          </NavLink>
-          <NavLink to="/events" className={linkClass}>
-            <CalendarHeart className="size-4" aria-hidden="true" />
-            <span className="hidden sm:inline">My Events</span>
-          </NavLink>
-          <Link to="/create" className="btn-primary ml-1 px-3 sm:px-4">
-            <Plus className="size-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Create New Event</span>
-            <span className="sm:hidden">New</span>
-          </Link>
+          {/* While a stored session is being checked, neither state is shown:
+              flashing "Sign in" at someone who is signed in reads as having
+              been logged out. */}
+          {isRestoring ? null : isAuthenticated ? (
+            <>
+              <NavLink to="/" end className={linkClass}>
+                <LayoutDashboard className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Dashboard</span>
+              </NavLink>
+              <NavLink to="/events" className={linkClass}>
+                <CalendarHeart className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">My Events</span>
+              </NavLink>
+              <Link to="/create" className="btn-primary ml-1 px-3 sm:px-4">
+                <Plus className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Create New Event</span>
+                <span className="sm:hidden">New</span>
+              </Link>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="ml-1 inline-flex items-center gap-2 rounded-xl border border-transparent px-3 py-2 text-sm font-semibold text-muted transition-colors hover:bg-white/70 hover:text-brand"
+                // The email is the only way to tell which account is in use,
+                // but it is too long for the bar on a phone, so it lives in
+                // the accessible name and the title instead.
+                aria-label={`Sign out of ${user?.email ?? 'your account'}`}
+                title={user?.email ?? undefined}
+              >
+                <LogOut className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Sign out</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/create" className={linkClass({ isActive: false })}>
+                <Plus className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Create a plan</span>
+              </Link>
+              <Link to="/login" className="btn-primary ml-1 px-3 sm:px-4">
+                <LogIn className="size-4" aria-hidden="true" />
+                <span>Sign in</span>
+              </Link>
+            </>
+          )}
         </nav>
       </div>
     </header>

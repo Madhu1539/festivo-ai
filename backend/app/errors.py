@@ -103,6 +103,27 @@ class StorageUnavailable(AppError):
     message = "Saved events are unavailable because the database is not reachable."
 
 
+class AuthRequired(AppError):
+    code = "AUTH_REQUIRED"
+    status_code = 401
+    message = "Please sign in to continue."
+
+
+class InvalidCredentials(AppError):
+    # One message for "no such account" and for "wrong password", on purpose.
+    # Distinguishing them turns the sign-in form into a way to discover which
+    # email addresses have accounts here.
+    code = "AUTH_INVALID_CREDENTIALS"
+    status_code = 401
+    message = "That email and password combination is not correct."
+
+
+class EmailAlreadyRegistered(AppError):
+    code = "AUTH_EMAIL_TAKEN"
+    status_code = 409
+    message = "An account with that email already exists. Try signing in instead."
+
+
 class RequestTooLarge(AppError):
     code = "REQUEST_TOO_LARGE"
     status_code = 413

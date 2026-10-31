@@ -57,14 +57,70 @@ export class ApiError extends Error {
   get isStorageIssue() {
     return this.code === 'STORAGE_UNAVAILABLE'
   }
+
+  /** True when signing in would fix it. */
+  get isAuthIssue() {
+    return this.code === 'AUTH_REQUIRED'
+  }
 }
 
-async function request(path, { method = 'GET', body, signal } = {}) {
+const TOKEN_KEY = 'festivo_auth_token'
+
+/**
+ * The session token, kept in localStorage.
+ *
+ * Not an httpOnly cookie, because the frontend and backend are on different
+ * registrable domains: an auth cookie would be a third-party cookie, which
+ * Safari blocks outright and Chrome is phasing out. It would work in
+ * development and fail for real users.
+ *
+ * The cost is that script running on this origin can read it, so the app must
+ * not introduce an XSS hole. The token is opaque and server-side revocable,
+ * so signing out invalidates it immediately rather than leaving it valid
+ * until it expires.
+ */
+export const authToken = {
+  get() {
+    try {
+      return localStorage.getItem(TOKEN_KEY)
+    } catch {
+      // Private-browsing modes can throw on access rather than return null.
+      return null
+    }
+  },
+  set(token) {
+    try {
+      localStorage.setItem(TOKEN_KEY, token)
+    } catch {
+      // Non-fatal: the session simply will not survive a reload.
+    }
+  },
+  clear() {
+    try {
+      localStorage.removeItem(TOKEN_KEY)
+    } catch {
+      // Nothing useful to do; the caller is signing out regardless.
+    }
+  },
+}
+
+/** Called when the server rejects our token, so the app can send us to login. */
+let onUnauthorized = null
+export function setUnauthorizedHandler(handler) {
+  onUnauthorized = handler
+}
+
+async function request(path, { method = 'GET', body, signal, auth = true } = {}) {
+  const token = auth ? authToken.get() : null
+  const headers = {}
+  if (body) headers['Content-Type'] = 'application/json'
+  if (token) headers.Authorization = `Bearer ${token}`
+
   let response
   try {
     response = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
       signal,
     })
@@ -76,6 +132,13 @@ async function request(path, { method = 'GET', body, signal } = {}) {
         'Could not reach the Festivo AI server. Check that the backend is running and try again.',
       status: 0,
     })
+  }
+
+  if (response.status === 401 && auth) {
+    // The token is gone, expired, or revoked. Drop it so the UI stops
+    // pretending we are signed in, then let the app redirect.
+    authToken.clear()
+    onUnauthorized?.()
   }
 
   if (response.status === 204) return null
@@ -116,13 +179,47 @@ async function request(path, { method = 'GET', body, signal } = {}) {
 // or on rapid navigation; without it, a resolved fetch sets state on a
 // component that is already gone.
 export const eventApi = {
-  health: ({ signal } = {}) => request('/health', { signal }),
+  health: ({ signal } = {}) => request('/health', { signal, auth: false }),
 
+  // --- Authentication ---
+  register: (email, password, { signal } = {}) =>
+    request('/auth/register', {
+      method: 'POST',
+      body: { email, password },
+      signal,
+      auth: false,
+    }),
+
+  login: (email, password, { signal } = {}) =>
+    request('/auth/login', {
+      method: 'POST',
+      body: { email, password },
+      signal,
+      auth: false,
+    }),
+
+  logout: ({ signal } = {}) =>
+    request('/auth/logout', { method: 'POST', signal }),
+
+  me: ({ signal } = {}) => request('/auth/me', { signal }),
+
+  // --- Plans ---
+  // Generation needs no account, so the app can be tried before signing up.
   generatePlan: (event, { signal } = {}) =>
-    request('/events/generate-plan', { method: 'POST', body: event, signal }),
+    request('/events/generate-plan', {
+      method: 'POST',
+      body: event,
+      signal,
+      auth: false,
+    }),
 
   regeneratePlan: (event, { signal } = {}) =>
-    request('/events/regenerate-plan', { method: 'POST', body: event, signal }),
+    request('/events/regenerate-plan', {
+      method: 'POST',
+      body: event,
+      signal,
+      auth: false,
+    }),
 
   planningOverview: ({ signal } = {}) => request('/events/overview', { signal }),
 

@@ -12,10 +12,12 @@ from __future__ import annotations
 import time
 from collections import defaultdict, deque
 from collections.abc import Iterable
+from typing import ClassVar
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .errors import RateLimited, RequestTooLarge
 
@@ -35,6 +37,9 @@ _SAVE_PLAN_PATH_SUFFIX = "/events"
 # it bounds memory on a long-running process and never affects a decision.
 _TRACKED_CLIENT_SWEEP_THRESHOLD = 1024
 
+# Methods that can carry a body worth measuring.
+_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
 
 def _body_limit_for(path: str) -> int:
     return (
@@ -44,22 +49,101 @@ def _body_limit_for(path: str) -> int:
     )
 
 
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject oversized bodies up front, before parsing or validation."""
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Defence-in-depth headers on every API response.
+
+    This service only ever returns JSON, so the policy can be as strict as it
+    gets: nothing is allowed to load, and the responses must not be framed or
+    content-sniffed. None of this substitutes for the escaping and validation
+    elsewhere - it is the layer that limits the damage if one of those is ever
+    wrong.
+    """
+
+    _HEADERS: ClassVar[dict[str, str]] = {
+        # A JSON API has no legitimate need to load anything at all.
+        "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+        # Stop a browser from second-guessing the declared content type and
+        # treating a response as script or HTML.
+        "X-Content-Type-Options": "nosniff",
+        # Belt and braces with frame-ancestors, for older browsers.
+        "X-Frame-Options": "DENY",
+        # Do not leak the API path back to third parties.
+        "Referrer-Policy": "no-referrer",
+    }
 
     async def dispatch(self, request: Request, call_next):
-        declared = request.headers.get("content-length")
+        response = await call_next(request)
+        for header, value in self._HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
+
+
+class BodySizeLimitMiddleware:
+    """Reject oversized bodies before anything downstream reads them.
+
+    Written as raw ASGI rather than `BaseHTTPMiddleware` on purpose. That base
+    class builds its own `receive` for the downstream call, so swapping the one
+    on a `Request` has no effect and the stream goes unmeasured - the limit
+    silently applies to declared sizes only, which is the bypass this closes.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        request = Request(scope)
         limit = _body_limit_for(request.url.path)
+        declared = request.headers.get("content-length")
 
         if declared is not None:
             try:
-                if int(declared) > limit:
-                    return _error(RequestTooLarge())
+                too_big = int(declared) > limit
             except ValueError:
                 # A malformed Content-Length is not something to guess about.
-                return _error(RequestTooLarge("Could not read the request size."))
+                response = _error(RequestTooLarge("Could not read the request size."))
+                return await response(scope, receive, send)
+            if too_big:
+                return await _error(RequestTooLarge())(scope, receive, send)
+            return await self.app(scope, receive, send)
 
-        return await call_next(request)
+        if scope.get("method") not in _BODY_METHODS:
+            return await self.app(scope, receive, send)
+
+        # No Content-Length means a chunked body, whose size is not known until
+        # it has been read. Measure it as it arrives, so a client cannot opt
+        # out of the limit just by leaving the header off.
+        received = 0
+        exceeded = False
+        replaced = False
+
+        async def capped() -> Message:
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    exceeded = True
+                    # Report the stream as finished rather than raising: an
+                    # exception from inside `receive` surfaces as a 500, while
+                    # ending the body lets the response be replaced below.
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            nonlocal replaced
+            if exceeded and message["type"] == "http.response.start":
+                # The handler saw a truncated body and is about to answer
+                # "invalid request". Say what actually happened instead.
+                replaced = True
+                return await _error(RequestTooLarge())(scope, receive, send)
+            if replaced:
+                return  # Swallow the abandoned response's body.
+            await send(message)
+
+        await self.app(scope, capped, guarded_send)
 
 
 def client_key(request: Request, *, trust_proxy: bool) -> str:

@@ -4,10 +4,14 @@ import { useEffect } from 'react'
 import ErrorBoundary from './components/ErrorBoundary'
 import Navbar from './components/Navbar'
 import EmptyState from './components/EmptyState'
+import ProtectedRoute from './components/ProtectedRoute'
+import { AuthProvider } from './context/AuthContext'
 import { PlanProvider } from './context/PlanContext'
 import CreateEvent from './pages/CreateEvent'
 import Dashboard from './pages/Dashboard'
 import EventPlanPage from './pages/EventPlanPage'
+import Login from './pages/Login'
+import Register from './pages/Register'
 import SavedEvents from './pages/SavedEvents'
 
 function ScrollToTop() {
@@ -34,45 +38,75 @@ function NotFound() {
 
 export default function App() {
   return (
-    <PlanProvider>
-      <a href="#main" className="skip-link">
-        Skip to main content
-      </a>
+    <AuthProvider>
+      <PlanProvider>
+        <a href="#main" className="skip-link">
+          Skip to main content
+        </a>
 
-      <ScrollToTop />
-      <Navbar />
+        <ScrollToTop />
+        <Navbar />
 
-      {/* tabIndex=-1 so the skip link reliably moves focus, not just scroll. */}
-      <main
-        id="main"
-        tabIndex={-1}
-        className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10"
-      >
-        <ErrorBoundary>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/create" element={<CreateEvent />} />
-            <Route path="/plan" element={<EventPlanPage />} />
-            <Route path="/events" element={<SavedEvents />} />
-            <Route path="/events/:eventId" element={<EventPlanPage />} />
-            <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </ErrorBoundary>
-      </main>
+        {/* tabIndex=-1 so the skip link reliably moves focus, not just scroll. */}
+        <main
+          id="main"
+          tabIndex={-1}
+          className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10"
+        >
+          <ErrorBoundary>
+            <Routes>
+              {/* Public: the plan can be generated before signing up, so the
+                  product can be judged before it asks for an account. */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/create" element={<CreateEvent />} />
+              <Route path="/plan" element={<EventPlanPage />} />
 
-      <footer className="border-t border-lav-200/70 bg-linear-to-r from-lav-50/80 via-white/70 to-teal-50/70 backdrop-blur-sm">
-        <div className="mx-auto max-w-6xl px-4 py-7 sm:px-6">
-          <p className="text-sm font-bold">
-            Festivo<span className="text-brand"> AI</span>
-          </p>
-          <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-muted">
-            Festivo AI generates planning suggestions and cost estimates. It does not
-            contact, book, verify, or price-check vendors, and the amounts shown are
-            not quotations. Always confirm details directly with your suppliers.
-          </p>
-        </div>
-      </footer>
-    </PlanProvider>
+              {/* Protected: everything that reads or writes stored data. */}
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/events"
+                element={
+                  <ProtectedRoute>
+                    <SavedEvents />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/events/:eventId"
+                element={
+                  <ProtectedRoute>
+                    <EventPlanPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route path="/dashboard" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </ErrorBoundary>
+        </main>
+
+        <footer className="border-t border-lav-200/70 bg-linear-to-r from-lav-50/80 via-white/70 to-teal-50/70 backdrop-blur-sm">
+          <div className="mx-auto max-w-6xl px-4 py-7 sm:px-6">
+            <p className="text-sm font-bold">
+              Festivo<span className="text-brand"> AI</span>
+            </p>
+            <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-muted">
+              Festivo AI generates planning suggestions and cost estimates. It does not
+              contact, book, verify, or price-check vendors, and the amounts shown are
+              not quotations. Always confirm details directly with your suppliers.
+            </p>
+          </div>
+        </footer>
+      </PlanProvider>
+    </AuthProvider>
   )
 }

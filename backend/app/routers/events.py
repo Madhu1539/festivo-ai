@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..dependencies import current_user
+from ..models import User
 from ..schemas import (
     ChecklistItemOut,
     ChecklistItemUpdate,
@@ -38,15 +40,21 @@ async def regenerate(payload: RegeneratePlanRequest) -> EventPlan:
 
 
 @router.get("/overview", response_model=PlanningOverviewOut)
-def overview(db: Session = Depends(get_db)) -> PlanningOverviewOut:
-    """Dashboard statistics from real saved data only (§7.3)."""
-    return storage.planning_overview(db)
+def overview(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> PlanningOverviewOut:
+    """Dashboard statistics from this account's saved data only (§7.3)."""
+    return storage.planning_overview(db, user.id)
 
 
 @router.post("", response_model=SavedEventOut, status_code=201)
-def save(payload: SaveEventRequest, db: Session = Depends(get_db)) -> SavedEventOut:
+def save(
+    payload: SaveEventRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> SavedEventOut:
     """Persist a generated plan with the input that produced it (§15.4)."""
-    row = storage.save_event(db, payload.event, payload.plan)
+    row = storage.save_event(db, payload.event, payload.plan, user.id)
     return SavedEventOut(
         id=row.id,
         created_at=row.created_at,
@@ -56,21 +64,31 @@ def save(payload: SaveEventRequest, db: Session = Depends(get_db)) -> SavedEvent
 
 
 @router.get("", response_model=list[SavedEventListItemOut])
-def list_events(db: Session = Depends(get_db)) -> list[SavedEventListItemOut]:
-    """All saved events, newest first, with checklist progress (§15.5)."""
-    return storage.list_saved_events(db)
+def list_events(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> list[SavedEventListItemOut]:
+    """This account's saved events, newest first, with progress (§15.5)."""
+    return storage.list_saved_events(db, user.id)
 
 
 @router.get("/{event_id}", response_model=SavedEventOut)
-def get_event(event_id: str, db: Session = Depends(get_db)) -> SavedEventOut:
+def get_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> SavedEventOut:
     """One saved event, with its figures recomputed from stored rows."""
-    return storage.get_saved_event(db, event_id)
+    return storage.get_saved_event(db, event_id, user.id)
 
 
 @router.delete("/{event_id}", status_code=204)
-def remove_event(event_id: str, db: Session = Depends(get_db)) -> None:
+def remove_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> None:
     """Delete a saved event and everything belonging to it."""
-    storage.delete_event(db, event_id)
+    storage.delete_event(db, event_id, user.id)
 
 
 @router.patch(
@@ -82,10 +100,11 @@ def update_checklist_item(
     item_id: str,
     payload: ChecklistItemUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> ChecklistItemOut:
     """Toggle one checklist item's completion (§15.6)."""
     return storage.set_checklist_completion(
-        db, event_id, item_id, payload.is_completed
+        db, event_id, item_id, payload.is_completed, user.id
     )
 
 
@@ -95,6 +114,9 @@ def update_timeline_item(
     item_id: str,
     payload: TimelineItemUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> TimelineItemOut:
     """Toggle one timeline item's completion."""
-    return storage.set_timeline_completion(db, event_id, item_id, payload.is_completed)
+    return storage.set_timeline_completion(
+        db, event_id, item_id, payload.is_completed, user.id
+    )

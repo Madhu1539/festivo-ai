@@ -468,3 +468,44 @@ class PlanningOverviewOut(BaseModel):
 
 
 SaveEventRequest.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+
+# Long enough to resist guessing, capped so a megabyte password cannot be used
+# to burn CPU in the key-derivation function on every attempt.
+Password = Annotated[str, Field(min_length=10, max_length=128)]
+
+
+class CredentialsIn(BaseModel):
+    """Sign-up and sign-in share one shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # EmailStr is avoided on purpose: it would pull in an extra dependency for
+    # a check that cannot establish the address is real anyway. A single @ with
+    # text either side rejects obvious mistakes, which is all format
+    # validation can honestly promise.
+    email: Annotated[
+        str,
+        Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+$"),
+    ]
+    password: Password
+
+
+class UserOut(BaseModel):
+    """The account, as the client is allowed to see it. No hash, ever."""
+
+    id: str
+    email: str
+    created_at: datetime
+
+
+class AuthOut(BaseModel):
+    """A successful sign-up or sign-in."""
+
+    user: UserOut
+    token: str
+

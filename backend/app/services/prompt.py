@@ -99,9 +99,13 @@ def quote_user_text(value: str) -> str:
     Control characters are dropped and the fence markers are neutralised so the
     quoted region cannot be closed from inside it.
     """
-    # Drop non-printables (including newlines) and collapse runs of whitespace,
-    # so the value cannot break out of its bullet or forge extra prompt lines.
-    cleaned = " ".join("".join(ch for ch in value if ch.isprintable()).split())
+    # Replace every non-printable with a space before collapsing runs, rather
+    # than deleting it. Deleting joined the text either side together, so
+    # "Ravi\nSharma" reached the model as "RaviSharma" - a name it had no way
+    # to read back correctly. Newlines still cannot survive, so the value
+    # remains unable to break out of its bullet or forge extra prompt lines.
+    printable = "".join(ch if ch.isprintable() else " " for ch in value)
+    cleaned = " ".join(printable.split())
     cleaned = cleaned.replace(_FENCE_OPEN, "(").replace(_FENCE_CLOSE, ")")
     return f"{_FENCE_OPEN}{cleaned}{_FENCE_CLOSE}"
 

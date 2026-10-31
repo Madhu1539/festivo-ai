@@ -148,8 +148,11 @@ def _idea_rows(plan: EventPlan) -> list[PersonalizedIdea]:
     ]
 
 
-def save_event(session: Session, event_input: EventInput, plan: EventPlan) -> Event:
+def save_event(
+    session: Session, event_input: EventInput, plan: EventPlan, user_id: str
+) -> Event:
     row = _event_row(event_input, plan)
+    row.user_id = user_id
     row.budget_items.extend(_budget_rows(plan))
     row.timeline_items.extend(_timeline_rows(plan))
     row.checklist_items.extend(_checklist_rows(plan))
@@ -163,17 +166,37 @@ def save_event(session: Session, event_input: EventInput, plan: EventPlan) -> Ev
     return row
 
 
-def delete_event(session: Session, event_id: str) -> None:
+def _owned_event(session: Session, event_id: str, user_id: str) -> Event:
+    """Fetch an event the caller owns, or raise NotFound.
+
+    The single place ownership is decided, so no endpoint can forget it.
+
+    Someone else's event raises NotFound rather than a 403 on purpose: a 403
+    confirms the id exists, which turns a failed guess into a positive signal
+    and makes the id space worth probing. "Not found" is also simply true from
+    the caller's position - it is not an event they have.
+    """
     row = session.get(Event, event_id)
-    if row is None:
+    if row is None or row.user_id != user_id:
         raise NotFound("That saved event no longer exists.")
-    session.delete(row)
+    return row
+
+
+def delete_event(session: Session, event_id: str, user_id: str) -> None:
+    session.delete(_owned_event(session, event_id, user_id))
     session.commit()
 
 
 def set_checklist_completion(
-    session: Session, event_id: str, item_id: str, is_completed: bool
+    session: Session,
+    event_id: str,
+    item_id: str,
+    is_completed: bool,
+    user_id: str,
 ) -> ChecklistItemOut:
+    # Ownership is checked on the parent event first, so an item id belonging
+    # to someone else's event cannot be toggled by guessing it.
+    _owned_event(session, event_id, user_id)
     item = session.get(ChecklistItem, item_id)
     if item is None or item.event_id != event_id:
         raise NotFound("That checklist item could not be found for this event.")
@@ -184,8 +207,13 @@ def set_checklist_completion(
 
 
 def set_timeline_completion(
-    session: Session, event_id: str, item_id: str, is_completed: bool
+    session: Session,
+    event_id: str,
+    item_id: str,
+    is_completed: bool,
+    user_id: str,
 ) -> TimelineItemOut:
+    _owned_event(session, event_id, user_id)
     item = session.get(TimelineItem, item_id)
     if item is None or item.event_id != event_id:
         raise NotFound("That timeline task could not be found for this event.")
@@ -200,10 +228,8 @@ def set_timeline_completion(
 # ---------------------------------------------------------------------------
 
 
-def get_saved_event(session: Session, event_id: str) -> SavedEventOut:
-    row = session.get(Event, event_id)
-    if row is None:
-        raise NotFound("That saved event no longer exists.")
+def get_saved_event(session: Session, event_id: str, user_id: str) -> SavedEventOut:
+    row = _owned_event(session, event_id, user_id)
     return SavedEventOut(
         id=row.id,
         created_at=row.created_at,
@@ -212,8 +238,14 @@ def get_saved_event(session: Session, event_id: str) -> SavedEventOut:
     )
 
 
-def list_saved_events(session: Session) -> list[SavedEventListItemOut]:
-    rows = session.scalars(select(Event).order_by(Event.created_at.desc())).all()
+def list_saved_events(
+    session: Session, user_id: str
+) -> list[SavedEventListItemOut]:
+    rows = session.scalars(
+        select(Event)
+        .where(Event.user_id == user_id)
+        .order_by(Event.created_at.desc())
+    ).all()
     today = date.today()
     items: list[SavedEventListItemOut] = []
     for row in rows:
@@ -243,35 +275,50 @@ def list_saved_events(session: Session) -> list[SavedEventListItemOut]:
     return items
 
 
-def planning_overview(session: Session) -> PlanningOverviewOut:
+def planning_overview(session: Session, user_id: str) -> PlanningOverviewOut:
+    """Dashboard figures for one account.
+
+    Every aggregate here is owner-scoped. The checklist counts have to reach
+    the owner through a join, because `checklist_items` only knows its
+    `event_id` - filtering it directly is not possible, and omitting the join
+    would total up every account's checklists into one number.
+    """
     today = date.today()
-    total = session.scalar(select(func.count()).select_from(Event)) or 0
+    mine = Event.user_id == user_id
+
+    total = session.scalar(select(func.count()).select_from(Event).where(mine)) or 0
     if total == 0:
         return PlanningOverviewOut(persistence_enabled=True)
 
     upcoming = (
         session.scalar(
-            select(func.count()).select_from(Event).where(Event.event_date >= today)
+            select(func.count())
+            .select_from(Event)
+            .where(mine, Event.event_date >= today)
         )
         or 0
     )
-    budget_sum = session.scalar(select(func.sum(Event.budget))) or 0
+    budget_sum = session.scalar(select(func.sum(Event.budget)).where(mine)) or 0
 
     currency = (
-        session.scalar(select(Event.currency).order_by(Event.created_at.desc()).limit(1))
+        session.scalar(
+            select(Event.currency)
+            .where(mine)
+            .order_by(Event.created_at.desc())
+            .limit(1)
+        )
         or "INR"
     )
 
-    checklist_total = (
-        session.scalar(select(func.count()).select_from(ChecklistItem)) or 0
+    owned_checklist = (
+        select(func.count())
+        .select_from(ChecklistItem)
+        .join(Event, ChecklistItem.event_id == Event.id)
+        .where(mine)
     )
+    checklist_total = session.scalar(owned_checklist) or 0
     checklist_done = (
-        session.scalar(
-            select(func.count())
-            .select_from(ChecklistItem)
-            .where(ChecklistItem.is_completed.is_(True))
-        )
-        or 0
+        session.scalar(owned_checklist.where(ChecklistItem.is_completed.is_(True))) or 0
     )
 
     return PlanningOverviewOut(
