@@ -42,6 +42,8 @@ export class ApiError extends Error {
       'AI_TIMEOUT',
       'AI_RATE_LIMITED',
       'AI_INVALID_OUTPUT',
+      // The current backend never emits this one; kept so an older or
+      // future deployment that does is still handled as retryable.
       'BUDGET_VALIDATION_FAILED',
       'NETWORK_ERROR',
       'INTERNAL_ERROR',

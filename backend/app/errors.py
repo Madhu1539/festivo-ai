@@ -91,12 +91,6 @@ class AIInvalidOutput(AppError):
     )
 
 
-class BudgetValidationFailed(AppError):
-    code = "BUDGET_VALIDATION_FAILED"
-    status_code = 422
-    message = "The generated budget did not pass validation. Please regenerate the plan."
-
-
 class NotFound(AppError):
     code = "NOT_FOUND"
     status_code = 404

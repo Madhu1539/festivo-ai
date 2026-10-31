@@ -21,15 +21,15 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;')
 }
 
-const e = escapeHtml
+const esc = escapeHtml
 
 function listSection(title, items) {
   if (!items?.length) return ''
   return `
     <section>
-      <h2>${e(title)}</h2>
+      <h2>${esc(title)}</h2>
       <ul class="notes">
-        ${items.map((item) => `<li>${e(item)}</li>`).join('')}
+        ${items.map((item) => `<li>${esc(item)}</li>`).join('')}
       </ul>
     </section>`
 }
@@ -37,23 +37,23 @@ function listSection(title, items) {
 function buildHtml(plan) {
   const { event_summary: summary, budget } = plan
   const currency = budget.currency ?? 'INR'
-  const money = (amount) => e(formatMoney(amount, currency))
+  const money = (amount) => esc(formatMoney(amount, currency))
 
   const budgetRows = budget.categories
     .map(
       (category) => `
         <tr${category.is_reserve ? ' class="reserve"' : ''}>
           <td>
-            <strong>${e(category.category)}</strong>
+            <strong>${esc(category.category)}</strong>
             ${category.is_reserve ? ' <span class="tag">Reserve</span>' : ''}
             ${
               category.description
-                ? `<div class="muted">${e(category.description)}</div>`
+                ? `<div class="muted">${esc(category.description)}</div>`
                 : ''
             }
           </td>
           <td class="num">${money(category.estimated_amount)}</td>
-          <td class="num">${e(formatPercent(category.percent_of_budget, 1))}</td>
+          <td class="num">${esc(formatPercent(category.percent_of_budget, 1))}</td>
         </tr>`,
     )
     .join('')
@@ -62,18 +62,18 @@ function buildHtml(plan) {
     .map(
       (item) => `
         <tr>
-          <td class="nowrap">${e(formatDate(item.due_date))}</td>
+          <td class="nowrap">${esc(formatDate(item.due_date))}</td>
           <td>
-            <strong>${e(item.title)}</strong>
+            <strong>${esc(item.title)}</strong>
             ${item.is_follow_up ? ' <span class="tag">After event</span>' : ''}
             ${item.is_overdue ? ' <span class="tag warn">Overdue</span>' : ''}
             ${
               item.description
-                ? `<div class="muted">${e(item.description)}</div>`
+                ? `<div class="muted">${esc(item.description)}</div>`
                 : ''
             }
           </td>
-          <td class="nowrap">${e(item.priority)}</td>
+          <td class="nowrap">${esc(item.priority)}</td>
           <td class="nowrap">${item.is_completed ? 'Done' : 'Pending'}</td>
         </tr>`,
     )
@@ -84,16 +84,16 @@ function buildHtml(plan) {
       (item) => `
         <tr>
           <td class="nowrap">${item.is_completed ? '[x]' : '[ ]'}</td>
-          <td class="nowrap">${e(item.category)}</td>
+          <td class="nowrap">${esc(item.category)}</td>
           <td>
-            <strong>${e(item.title)}</strong>
+            <strong>${esc(item.title)}</strong>
             ${
               item.description
-                ? `<div class="muted">${e(item.description)}</div>`
+                ? `<div class="muted">${esc(item.description)}</div>`
                 : ''
             }
           </td>
-          <td class="nowrap">${e(item.priority)}</td>
+          <td class="nowrap">${esc(item.priority)}</td>
         </tr>`,
     )
     .join('')
@@ -102,9 +102,9 @@ function buildHtml(plan) {
     .map(
       (idea) => `
         <li>
-          <span class="muted">${e(idea.category)}</span><br />
-          <strong>${e(idea.title)}</strong>
-          ${idea.description ? `<div>${e(idea.description)}</div>` : ''}
+          <span class="muted">${esc(idea.category)}</span><br />
+          <strong>${esc(idea.title)}</strong>
+          ${idea.description ? `<div>${esc(idea.description)}</div>` : ''}
           ${
             idea.estimated_cost != null
               ? `<div class="muted">Rough estimate: ${money(idea.estimated_cost)}</div>`
@@ -118,7 +118,7 @@ function buildHtml(plan) {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>${e(summary.event_name)} — Festivo AI Plan</title>
+<title>${esc(summary.event_name)} — Festivo AI Plan</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -168,19 +168,19 @@ function buildHtml(plan) {
 <body>
   <header>
     <p class="brand">Festivo AI</p>
-    <h1>${e(summary.event_name)}</h1>
+    <h1>${esc(summary.event_name)}</h1>
     <p class="muted">
-      ${e(summary.event_type_label)} · ${e(formatLongDate(summary.event_date))} ·
-      ${e(summary.location)}
+      ${esc(summary.event_type_label)} · ${esc(formatLongDate(summary.event_date))} ·
+      ${esc(summary.location)}
     </p>
 
     <dl class="summary">
-      <div><dt>Date</dt><dd>${e(formatLongDate(summary.event_date))}</dd></div>
-      <div><dt>Location</dt><dd>${e(summary.location)}</dd></div>
-      <div><dt>Guests</dt><dd>${e(summary.guest_count)}</dd></div>
+      <div><dt>Date</dt><dd>${esc(formatLongDate(summary.event_date))}</dd></div>
+      <div><dt>Location</dt><dd>${esc(summary.location)}</dd></div>
+      <div><dt>Guests</dt><dd>${esc(summary.guest_count)}</dd></div>
       <div><dt>Budget</dt><dd>${money(summary.budget)}</dd></div>
       <div><dt>Per guest</dt><dd>${money(summary.budget_per_guest)}</dd></div>
-      <div><dt>Theme</dt><dd>${e(summary.theme || 'AI suggested')}</dd></div>
+      <div><dt>Theme</dt><dd>${esc(summary.theme || 'AI suggested')}</dd></div>
     </dl>
   </header>
 
@@ -203,7 +203,7 @@ function buildHtml(plan) {
         <tr>
           <td>Total allocated</td>
           <td class="num">${money(budget.total_allocated)}</td>
-          <td class="num">${e(
+          <td class="num">${esc(
             formatPercent(
               budget.total_budget > 0
                 ? (budget.total_allocated / budget.total_budget) * 100
@@ -245,8 +245,8 @@ function buildHtml(plan) {
   ${listSection('Things to watch', plan.warnings)}
 
   <p class="disclaimer">
-    ${e(plan.estimate_disclaimer ?? '')}
-    Generated by Festivo AI on ${e(
+    ${esc(plan.estimate_disclaimer ?? '')}
+    Generated by Festivo AI on ${esc(
       new Date(plan.generated_at ?? Date.now()).toLocaleString('en-IN'),
     )}.
   </p>

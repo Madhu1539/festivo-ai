@@ -26,7 +26,7 @@ import {
   withChecklistItem,
   withTimelineItem,
 } from '../context/PlanContext'
-import { OPTIONAL_INPUT_FIELDS } from '../forms/eventFormModel'
+import { inputFromSavedPlan } from '../forms/eventFormModel'
 import { eventApi } from '../services/eventApi'
 import { printPlan } from '../utils/exportPlan'
 
@@ -82,7 +82,7 @@ export default function EventPlanPage() {
   // Memoised: this builds a fresh object (including a new Date), and it would
   // otherwise be rebuilt on every render, including every checklist toggle.
   const input = useMemo(
-    () => (isSaved ? savedInputFromPlan(savedPlan) : draft?.input),
+    () => (isSaved ? inputFromSavedPlan(savedPlan) : draft?.input),
     [isSaved, savedPlan, draft],
   )
 
@@ -445,31 +445,3 @@ export default function EventPlanPage() {
   )
 }
 
-/** Rebuilds the API input shape from a saved plan, for edit and regenerate. */
-function savedInputFromPlan(plan) {
-  if (!plan) return null
-  const summary = plan.event_summary
-  const today = new Date().toISOString().slice(0, 10)
-
-  const input = {
-    event_type: summary.event_type,
-    event_name: summary.event_name,
-    // A past event cannot be resubmitted as-is; default to today.
-    event_date: summary.event_date < today ? today : summary.event_date,
-    budget: summary.budget,
-    currency: summary.currency,
-    guest_count: summary.guest_count,
-    location: summary.location,
-    theme: summary.theme,
-    preferences: summary.preferences ?? [],
-  }
-
-  // Carry the optional requirements through. Losing an accessibility or
-  // dietary need on regenerate would produce a plan that contradicts what
-  // the user told us, so these must survive the round trip.
-  for (const field of OPTIONAL_INPUT_FIELDS) {
-    if (summary[field]) input[field] = summary[field]
-  }
-
-  return input
-}

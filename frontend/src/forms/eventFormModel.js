@@ -9,7 +9,7 @@
 
 import { AI_THEME_OPTION, preferenceOptions, themeOptions } from '../constants/eventTypes'
 import { validateBudget, validateGuestCount } from '../utils/budgetValidation'
-import { validateEventDate } from '../utils/dateValidation'
+import { validateEventDate, todayIso } from '../utils/dateValidation'
 
 /** Sentinel for "my theme isn't in the list", distinct from an empty theme. */
 export const CUSTOM_THEME = '__custom__'
@@ -163,4 +163,41 @@ export function fromEventInput(input) {
     must_have_activities: input.must_have_activities ?? '',
     constraints: input.constraints ?? '',
   }
+}
+
+/**
+ * Rebuilds the API input shape from a saved plan, for edit and regenerate.
+ *
+ * The third mapping in this family, alongside `toEventInput` (form -> API) and
+ * `fromEventInput` (API -> form): this one is saved plan -> API.
+ */
+export function inputFromSavedPlan(plan) {
+  if (!plan) return null
+  const summary = plan.event_summary
+  // Must be the user's local date, not UTC: `toISOString()` would report
+  // yesterday for any timezone ahead of UTC during their early morning, and
+  // the past-date guard below would then silently fail to fire.
+  const today = todayIso()
+
+  const input = {
+    event_type: summary.event_type,
+    event_name: summary.event_name,
+    // A past event cannot be resubmitted as-is; default to today.
+    event_date: summary.event_date < today ? today : summary.event_date,
+    budget: summary.budget,
+    currency: summary.currency,
+    guest_count: summary.guest_count,
+    location: summary.location,
+    theme: summary.theme,
+    preferences: summary.preferences ?? [],
+  }
+
+  // Carry the optional requirements through. Losing an accessibility or
+  // dietary need on regenerate would produce a plan that contradicts what
+  // the user told us, so these must survive the round trip.
+  for (const field of OPTIONAL_INPUT_FIELDS) {
+    if (summary[field]) input[field] = summary[field]
+  }
+
+  return input
 }

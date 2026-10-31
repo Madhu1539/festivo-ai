@@ -9,6 +9,7 @@ explicitly marked them as follow-up activities (§10.3).
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import NamedTuple
 
 from ..models import new_id
 from ..schemas import AITimelineItem, EventInput, TimelineItemOut
@@ -66,10 +67,21 @@ def parse_date(value: object) -> date | None:
     return None
 
 
-def build_timeline(
-    event: EventInput, items: list[AITimelineItem]
-) -> tuple[list[TimelineItemOut], list[str]]:
-    warnings: list[str] = []
+class _ParseResult(NamedTuple):
+    """Timeline items accepted from the model, plus what had to be corrected."""
+
+    items: list[TimelineItemOut]
+    invalid_dates: int
+    clamped: int
+
+
+def _parse_items(event: EventInput, items: list[AITimelineItem]) -> _ParseResult:
+    """Validate, de-duplicate and clamp the model's timeline items.
+
+    Items are dropped for a blank title, a duplicate title, or an unreadable
+    due date. A preparation task dated after the event is pulled back to the
+    event date rather than dropped.
+    """
     today = date.today()
     event_date = event.event_date
 
@@ -116,6 +128,13 @@ def build_timeline(
 
     # Chronological order; follow-up activities always sort last (§10.3).
     parsed.sort(key=lambda i: (i.is_follow_up, i.due_date, i.title))
+    return _ParseResult(parsed, invalid_dates, clamped)
+
+
+def _timeline_warnings(event: EventInput, result: _ParseResult) -> list[str]:
+    """Explain to the user everything that was dropped, moved, or is urgent."""
+    warnings: list[str] = []
+    invalid_dates, clamped = result.invalid_dates, result.clamped
 
     if invalid_dates:
         warnings.append(
@@ -131,13 +150,13 @@ def build_timeline(
             "the event date."
         )
 
-    overdue = sum(1 for i in parsed if i.is_overdue)
+    overdue = sum(1 for i in result.items if i.is_overdue)
     if overdue:
         warnings.append(
             f"{overdue} {'task is' if overdue == 1 else 'tasks are'} already overdue "
             "based on today's date. Treat them as immediate priorities."
         )
-    if not parsed:
+    if not result.items:
         warnings.append(
             "No valid timeline tasks were generated. Try regenerating the plan."
         )
@@ -148,4 +167,11 @@ def build_timeline(
             "accelerated schedule with compressed deadlines."
         )
 
-    return parsed, warnings
+    return warnings
+
+
+def build_timeline(
+    event: EventInput, items: list[AITimelineItem]
+) -> tuple[list[TimelineItemOut], list[str]]:
+    result = _parse_items(event, items)
+    return list(result.items), _timeline_warnings(event, result)

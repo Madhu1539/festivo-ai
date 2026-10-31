@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from decimal import ROUND_HALF_UP, Decimal
+from typing import NamedTuple
 
 from ..models import new_id
 from ..schemas import (
@@ -147,14 +148,22 @@ def _total(rows: list[CategoryRow]) -> Decimal:
     return sum((amount for _, amount, _ in rows), Decimal("0"))
 
 
-def build_budget(
-    event: EventInput, categories: list[AIBudgetCategory]
-) -> tuple[BudgetOverviewOut, list[str]]:
-    """Turn raw AI categories into a validated budget overview."""
-    warnings: list[str] = []
-    budget = to_decimal(event.budget)
+class _CleanedCategories(NamedTuple):
+    """Phase-1 output: spendable categories separated from the reserve."""
 
-    # --- 1. Clean the raw categories ---------------------------------------
+    planned: list[CategoryRow]
+    reserve_total: Decimal
+    reserve_description: str | None
+    dropped: int
+
+
+def _clean_categories(categories: list[AIBudgetCategory]) -> _CleanedCategories:
+    """Drop unusable categories and pull the reserve out of the plain ones.
+
+    A category is unusable if it has no name or a non-positive amount. Reserve
+    categories are accumulated separately because the reserve is not a
+    spendable line and must not be rescaled with the rest.
+    """
     planned: list[CategoryRow] = []
     reserve_total = Decimal("0")
     reserve_description: str | None = None
@@ -172,9 +181,90 @@ def build_budget(
             continue
         planned.append((name, amount, raw.description))
 
-    if dropped:
+    return _CleanedCategories(planned, reserve_total, reserve_description, dropped)
+
+
+def _clamp_reserve(
+    event: EventInput, budget: Decimal, reserve_total: Decimal
+) -> tuple[Decimal, list[str]]:
+    """Cut a reserve that swallows the whole budget down to a usable share."""
+    if not (reserve_total >= budget and budget > 0):
+        return reserve_total, []
+
+    clamped = (budget * MAX_RESERVE_SHARE).quantize(CENTS, rounding=ROUND_HALF_UP)
+    return clamped, [
+        (
+            f"The generated emergency reserve ({event.currency} {to_float(reserve_total):,.2f}) "
+            f"was not usable against a budget of {event.currency} {to_float(budget):,.2f}. "
+            f"It has been reduced to {event.currency} {to_float(clamped):,.2f}."
+        )
+    ]
+
+
+def _fit_to_budget(
+    event: EventInput,
+    budget: Decimal,
+    planned: list[CategoryRow],
+    reserve_total: Decimal,
+) -> tuple[list[CategoryRow], bool, list[str]]:
+    """Scale categories down to fit the budget where possible (§9.5).
+
+    The reserve is held back and the remainder rescaled proportionally. When
+    there is nothing left to scale into, the excess is reported instead of
+    being silently absorbed.
+    """
+    planned_total = _total(planned)
+    allocated = planned_total + reserve_total
+    if allocated <= budget:
+        return planned, False, []
+
+    overage = allocated - budget
+    target = budget - reserve_total
+
+    if target > 0 and planned_total > 0:
+        rescaled = _rescale(planned, target)
+        return (
+            rescaled,
+            True,
+            [
+                (
+                    f"The generated allocation came to {event.currency} "
+                    f"{to_float(allocated):,.2f}, which is {event.currency} "
+                    f"{to_float(overage):,.2f} over your budget of {event.currency} "
+                    f"{to_float(budget):,.2f}. Category amounts have been scaled "
+                    "proportionally to fit. Your budget was not changed."
+                )
+            ],
+        )
+
+    # Cannot rescale — surface the excess clearly instead.
+    return (
+        planned,
+        False,
+        [
+            (
+                f"The generated allocation exceeds your budget by {event.currency} "
+                f"{to_float(overage):,.2f}. Please regenerate the plan or raise the budget."
+            )
+        ],
+    )
+
+
+def build_budget(
+    event: EventInput, categories: list[AIBudgetCategory]
+) -> tuple[BudgetOverviewOut, list[str]]:
+    """Turn raw AI categories into a validated budget overview."""
+    warnings: list[str] = []
+    budget = to_decimal(event.budget)
+
+    cleaned = _clean_categories(categories)
+    planned = cleaned.planned
+    reserve_total = cleaned.reserve_total
+
+    if cleaned.dropped:
         warnings.append(
-            f"{dropped} budget {'category was' if dropped == 1 else 'categories were'} "
+            f"{cleaned.dropped} budget "
+            f"{'category was' if cleaned.dropped == 1 else 'categories were'} "
             "ignored because the amount was missing or not positive."
         )
 
@@ -188,50 +278,20 @@ def build_budget(
         warnings.extend(overview_warnings)
         return overview, warnings
 
-    # --- 2. Clamp an unusable reserve --------------------------------------
-    if reserve_total >= budget and budget > 0:
-        clamped = (budget * MAX_RESERVE_SHARE).quantize(
-            CENTS, rounding=ROUND_HALF_UP
-        )
-        warnings.append(
-            f"The generated emergency reserve ({event.currency} {to_float(reserve_total):,.2f}) "
-            f"was not usable against a budget of {event.currency} {to_float(budget):,.2f}. "
-            f"It has been reduced to {event.currency} {to_float(clamped):,.2f}."
-        )
-        reserve_total = clamped
+    reserve_total, reserve_warnings = _clamp_reserve(event, budget, reserve_total)
+    warnings.extend(reserve_warnings)
 
-    planned_total = _total(planned)
-
-    # --- 3. Over-budget handling (§9.5) ------------------------------------
-    was_rescaled = False
-    allocated = planned_total + reserve_total
-    if allocated > budget:
-        overage = allocated - budget
-        target = budget - reserve_total
-        if target > 0 and planned_total > 0:
-            planned = _rescale(planned, target)
-            planned_total = _total(planned)
-            was_rescaled = True
-            warnings.append(
-                f"The generated allocation came to {event.currency} "
-                f"{to_float(allocated):,.2f}, which is {event.currency} "
-                f"{to_float(overage):,.2f} over your budget of {event.currency} "
-                f"{to_float(budget):,.2f}. Category amounts have been scaled "
-                "proportionally to fit. Your budget was not changed."
-            )
-        else:
-            # Cannot rescale — surface the excess clearly instead.
-            warnings.append(
-                f"The generated allocation exceeds your budget by {event.currency} "
-                f"{to_float(overage):,.2f}. Please regenerate the plan or raise the budget."
-            )
+    planned, was_rescaled, fit_warnings = _fit_to_budget(
+        event, budget, planned, reserve_total
+    )
+    warnings.extend(fit_warnings)
 
     overview, overview_warnings = _assemble_overview(
         event,
         budget,
         planned,
         reserve_total,
-        reserve_description,
+        cleaned.reserve_description,
         was_rescaled,
     )
     warnings.extend(overview_warnings)

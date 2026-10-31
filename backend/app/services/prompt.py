@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
+from typing import NamedTuple
 
 from ..schemas import EVENT_TYPE_LABELS, EventInput
 from .timeline import ACCELERATED_THRESHOLD_DAYS, is_accelerated
@@ -104,29 +106,46 @@ def quote_user_text(value: str) -> str:
     return f"{_FENCE_OPEN}{cleaned}{_FENCE_CLOSE}"
 
 
-def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str:
-    today = date.today()
-    days = event.days_until_event
-    label = EVENT_TYPE_LABELS[event.event_type]
-    hints = CATEGORY_HINTS[event.event_type]
-    cur = event.currency
+class _Context(NamedTuple):
+    """Values derived once and shared by every section of the prompt.
 
-    lines: list[str] = []
-    line = lines.append
+    `today` in particular must be resolved once: if each section called
+    `date.today()` itself, a request spanning midnight could state one date in
+    the event details and a different one in the timeline rules.
+    """
 
-    line(f"Create a complete {label.lower()} plan.")
+    today: date
+    days: int
+    label: str
+    hints: tuple[str, ...]
+    currency: str
+
+
+# Each section appends to the shared list via `line` and opens with a blank
+# line, so the assembled prompt keeps one blank line between headings.
+Emit = Callable[[str], None]
+
+
+def _event_details(
+    line: Emit, event: EventInput, ctx: _Context, regeneration_note: str | None
+) -> None:
     line("")
     line("## Event details")
-    line(f"- Event type: {label}")
+    line(f"- Event type: {ctx.label}")
     name = quote_user_text(event.event_name) if event.event_name else "(not provided)"
     line(f"- Event name: {name}")
     line(f"- Event date: {event.event_date.isoformat()}")
-    line(f"- Today's date: {today.isoformat()}")
-    line(f"- Days available to prepare: {days}")
-    line(f"- Total budget: {cur} {event.budget:,.0f} (this is the hard ceiling)")
-    line(f"- Currency: {cur}")
+    line(f"- Today's date: {ctx.today.isoformat()}")
+    line(f"- Days available to prepare: {ctx.days}")
+    line(
+        f"- Total budget: {ctx.currency} {event.budget:,.0f} (this is the hard ceiling)"
+    )
+    line(f"- Currency: {ctx.currency}")
     line(f"- Guest count: {event.guest_count}")
-    line(f"- Budget per guest: approximately {cur} {event.budget / max(1, event.guest_count):,.0f}")
+    line(
+        f"- Budget per guest: approximately {ctx.currency} "
+        f"{event.budget / max(1, event.guest_count):,.0f}"
+    )
     line(f"- Location: {quote_user_text(event.location)}")
     line(
         "- Theme: "
@@ -149,7 +168,9 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
     if event.cultural_preferences:
         line(f"- Cultural preferences: {quote_user_text(event.cultural_preferences)}")
     if event.accessibility_needs:
-        line(f"- Accessibility requirements: {quote_user_text(event.accessibility_needs)}")
+        line(
+            f"- Accessibility requirements: {quote_user_text(event.accessibility_needs)}"
+        )
     if event.must_have_activities:
         line(f"- Must-have activities: {quote_user_text(event.must_have_activities)}")
     if event.constraints:
@@ -157,33 +178,40 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
     if regeneration_note:
         line(f"- Revision request from the user: {quote_user_text(regeneration_note)}")
 
+
+def _budget_rules(line: Emit, event: EventInput, ctx: _Context) -> None:
     line("")
     line("## 1. budget_breakdown")
-    line(f"- Split the {cur} {event.budget:,.0f} budget across 5 to 9 expense categories.")
+    line(
+        f"- Split the {ctx.currency} {event.budget:,.0f} budget across 5 to 9 "
+        "expense categories."
+    )
     line("- Use amounts as plain numbers, no currency symbols and no thousands separators.")
     line("- Every amount must be a positive number.")
     line(
         "- Include exactly ONE category with is_reserve = true, named "
-        "\"Emergency reserve\", sized at roughly 5-15% of the budget."
+        '"Emergency reserve", sized at roughly 5-15% of the budget.'
     )
     line(
         f"- The sum of ALL categories including the reserve must equal exactly "
         f"{event.budget:,.0f}. Add the numbers up before answering."
     )
     line("- Scale amounts to the guest count; per-head costs must be realistic.")
-    line(f"- Relevant categories for a {label.lower()} may include:")
-    for hint in hints:
+    line(f"- Relevant categories for a {ctx.label.lower()} may include:")
+    for hint in ctx.hints:
         line(f"    - {hint}")
     line(
         "- Only include categories this specific event actually needs. Omit the rest "
         "rather than allocating a token amount."
     )
 
+
+def _timeline_rules(line: Emit, event: EventInput, ctx: _Context) -> None:
     line("")
     line("## 2. timeline")
     if is_accelerated(event):
         line(
-            f"- The event is only {days} day(s) away, which is under the normal "
+            f"- The event is only {ctx.days} day(s) away, which is under the normal "
             f"{ACCELERATED_THRESHOLD_DAYS}-day planning window. Produce an "
             "ACCELERATED schedule: fewer, larger, tightly packed tasks."
         )
@@ -191,7 +219,7 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
         line("- Produce 6 to 10 preparation tasks spread across the available time.")
     event_day = event.event_date.isoformat()
     line(
-        f"- Every due_date must be an ISO date between {today.isoformat()} "
+        f"- Every due_date must be an ISO date between {ctx.today.isoformat()} "
         f"and {event_day}."
     )
     line("- Order tasks from earliest to latest.")
@@ -203,14 +231,21 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
     )
     line("- priority must be one of: high, medium, low.")
 
+
+def _checklist_rules(line: Emit, ctx: _Context) -> None:
     line("")
     line("## 3. vendor_checklist")
-    line(f"- List 6 to 12 services, supplies, and arrangements a {label.lower()} needs.")
+    line(
+        f"- List 6 to 12 services, supplies, and arrangements a "
+        f"{ctx.label.lower()} needs."
+    )
     line("- Each item names a vendor or task CATEGORY, never a real business.")
     line("- Adapt the list to this event; omit categories that do not apply.")
     line("- Write each title as an action the user can tick off.")
     line("- priority must be one of: high, medium, low.")
 
+
+def _idea_rules(line: Emit, ctx: _Context) -> None:
     line("")
     line("## 4. personalized_ideas")
     line("- Provide 6 to 10 concrete ideas tailored to the theme, budget, and guest count.")
@@ -220,9 +255,11 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
     line("- Include at least two budget-saving alternatives.")
     line(
         "- estimated_cost is optional; include it only when a rough figure is "
-        f"genuinely useful, as a plain number in {cur}."
+        f"genuinely useful, as a plain number in {ctx.currency}."
     )
 
+
+def _assumption_rules(line: Emit) -> None:
     line("")
     line("## 5. assumptions and warnings")
     line("- assumptions: 2 to 5 plain-language notes about what you assumed.")
@@ -232,11 +269,37 @@ def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str
         "the generic estimate disclaimer here."
     )
 
+
+def _closing_disclaimer(line: Emit, event: EventInput) -> None:
     line("")
     line(
         f"Remember: all figures are estimates for {quote_user_text(event.location)}, "
         "not verified quotations, and no vendor has been contacted."
     )
+
+
+def build_prompt(event: EventInput, regeneration_note: str | None = None) -> str:
+    """Assemble the generation prompt from its sections, in order."""
+    ctx = _Context(
+        today=date.today(),
+        days=event.days_until_event,
+        label=EVENT_TYPE_LABELS[event.event_type],
+        hints=tuple(CATEGORY_HINTS[event.event_type]),
+        currency=event.currency,
+    )
+
+    lines: list[str] = []
+    line = lines.append
+
+    line(f"Create a complete {ctx.label.lower()} plan.")
+    _event_details(line, event, ctx, regeneration_note)
+    _budget_rules(line, event, ctx)
+    _timeline_rules(line, event, ctx)
+    _checklist_rules(line, ctx)
+    _idea_rules(line, ctx)
+    _assumption_rules(line)
+    _closing_disclaimer(line, event)
+
     return "\n".join(lines)
 
 

@@ -5,12 +5,13 @@
  * silently lost from the plan the user receives.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   EMPTY_FORM,
   OPTIONAL_INPUT_FIELDS,
   fromEventInput,
+  inputFromSavedPlan,
   toEventInput,
   validateForm,
 } from '../src/forms/eventFormModel'
@@ -165,5 +166,86 @@ describe('fromEventInput', () => {
     const form = fromEventInput({ event_type: 'wedding' })
     expect(form.event_type).toBe('wedding')
     expect(form.location).toBe('')
+  })
+})
+
+describe('inputFromSavedPlan', () => {
+  const planWith = (summary) => ({
+    event_summary: {
+      event_type: 'wedding',
+      event_name: 'Anniversary',
+      event_date: '2027-03-15',
+      budget: 400000,
+      currency: 'INR',
+      guest_count: 150,
+      location: 'Bhopal',
+      theme: 'Marigold',
+      preferences: ['Live music'],
+      ...summary,
+    },
+  })
+
+  it('returns null for a missing plan', () => {
+    expect(inputFromSavedPlan(null)).toBeNull()
+    expect(inputFromSavedPlan(undefined)).toBeNull()
+  })
+
+  it('carries a future event date through unchanged', () => {
+    const input = inputFromSavedPlan(planWith({ event_date: '2027-03-15' }))
+    expect(input.event_date).toBe('2027-03-15')
+    expect(input.location).toBe('Bhopal')
+    expect(input.preferences).toEqual(['Live music'])
+  })
+
+  it('defaults a past event date to today', () => {
+    const input = inputFromSavedPlan(planWith({ event_date: '2020-01-01' }))
+    expect(input.event_date).toBe(todayIso())
+  })
+
+  /**
+   * Regression: "today" was computed with `new Date().toISOString()`, which is
+   * the UTC date. For any timezone ahead of UTC, during the user's early
+   * morning, that is still *yesterday* — so an event dated yesterday was not
+   * recognised as past, was sent to the API unchanged, and the save was
+   * rejected for having a past date. IST (UTC+5:30) is this app's primary
+   * timezone, so the broken window was 00:00-05:30 every day.
+   */
+  it('treats yesterday as past even in a timezone ahead of UTC', () => {
+    // 01:00 on 1 Nov in IST is still 19:30 on 31 Oct in UTC.
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-31T19:30:00Z'))
+      const offsetSpy = vi
+        .spyOn(Date.prototype, 'getTimezoneOffset')
+        .mockReturnValue(-330) // IST = UTC+5:30
+
+      // The user's local date is 2026-11-01, so 2026-10-31 is in the past.
+      expect(todayIso()).toBe('2026-11-01')
+
+      const input = inputFromSavedPlan(planWith({ event_date: '2026-10-31' }))
+      expect(input.event_date).toBe('2026-11-01')
+
+      offsetSpy.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves the optional requirements', () => {
+    const input = inputFromSavedPlan(
+      planWith({
+        accessibility_needs: 'Step-free access',
+        food_preference: 'Jain',
+      }),
+    )
+    expect(input.accessibility_needs).toBe('Step-free access')
+    expect(input.food_preference).toBe('Jain')
+  })
+
+  it('omits optional requirements that are absent', () => {
+    const input = inputFromSavedPlan(planWith({}))
+    for (const field of OPTIONAL_INPUT_FIELDS) {
+      expect(input[field]).toBeUndefined()
+    }
   })
 })
